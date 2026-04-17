@@ -144,41 +144,74 @@ jobs:
 
       - name: Resolve image repository
         id: image-repository
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: resolve-image-repository
-          registry_hostname: ${{ inputs.registry_hostname }}
-          registry_account_id: ${{ inputs.registry_account_id }}
-          aws_region: ${{ env.AWS_REGION }}
-          ecr_namespace: ${{ env.ECR_NAMESPACE }}
-          app_name: ${{ env.APP_NAME }}
+        env:
+          REGISTRY_HOSTNAME: ${{ inputs.registry_hostname }}
+          REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
+        run: |
+          if [ -n "$REGISTRY_HOSTNAME" ]; then
+            registry_host="$REGISTRY_HOSTNAME"
+          elif [ -n "$REGISTRY_ACCOUNT_ID" ]; then
+            registry_host="${REGISTRY_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          else
+            registry_host=""
+          fi
+
+          repository_path="${ECR_NAMESPACE}/${APP_NAME}"
+          if [ -n "$registry_host" ]; then
+            image_repository="${registry_host}/${repository_path}"
+          else
+            image_repository="${repository_path}"
+          fi
+
+          {
+            echo "registry_host=${registry_host}"
+            echo "image_repository=${image_repository}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Resolve registry role
         id: registry-role
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: resolve-registry-role
-          registry_account_id: ${{ inputs.registry_account_id }}
-          registry_role_name: ${{ inputs.aws_registry_role_name }}
-          registry_role_arn: ${{ inputs.aws_registry_role_to_assume }}
-          registry_role_secret: ${{ secrets.AWS_REGISTRY_ROLE }}
+        env:
+          REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
+          REGISTRY_ROLE_NAME: ${{ inputs.aws_registry_role_name }}
+          REGISTRY_ROLE_ARN: ${{ inputs.aws_registry_role_to_assume }}
+          REGISTRY_ROLE_SECRET: ${{ secrets.AWS_REGISTRY_ROLE }}
+        run: |
+          role_to_assume="$REGISTRY_ROLE_ARN"
+
+          if [ -z "$role_to_assume" ] && [ -n "$REGISTRY_ACCOUNT_ID" ] && [ -n "$REGISTRY_ROLE_NAME" ]; then
+            role_to_assume="arn:aws:iam::${REGISTRY_ACCOUNT_ID}:role/${REGISTRY_ROLE_NAME}"
+          fi
+
+          if [ -z "$role_to_assume" ] && [ -n "$REGISTRY_ROLE_SECRET" ]; then
+            role_to_assume="$REGISTRY_ROLE_SECRET"
+          fi
+
+          echo "value=${role_to_assume}" >> "$GITHUB_OUTPUT"
 
       - name: Validate publish configuration
         if: inputs.push_image || inputs.sign_release
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: validate-publish-config
-          image_repository: ${{ steps.image-repository.outputs.image_repository }}
-          registry_host: ${{ steps.image-repository.outputs.registry_host }}
-          aws_registry_role_to_assume: ${{ steps.registry-role.outputs.value }}
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
+          REGISTRY_HOST: ${{ steps.image-repository.outputs.registry_host }}
+          AWS_REGISTRY_ROLE_TO_ASSUME: ${{ steps.registry-role.outputs.value }}
+        run: |
+          test -n "$IMAGE_REPOSITORY" \
+            || { echo "Image repository could not be determined" >&2; exit 1; }
+
+          test -n "$AWS_REGISTRY_ROLE_TO_ASSUME" \
+            || { echo "Provide aws_registry_role_to_assume, or registry_account_id with aws_registry_role_name, or secret AWS_REGISTRY_ROLE when pushing or signing" >&2; exit 1; }
+
+          test -n "$REGISTRY_HOST" \
+            || { echo "A remote registry must be configured when push_image or sign_release is enabled" >&2; exit 1; }
 
       - name: Lint Dockerfile with Hadolint
         if: inputs.lint_dockerfile
         id: hadolint
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: lint-dockerfile
-          dockerfile: ${{ inputs.dockerfile }}
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          test -f "$DOCKERFILE" || { echo "Dockerfile '$DOCKERFILE' not found" >&2; exit 1; }
+          docker run --rm -i hadolint/hadolint:2.12.0 hadolint - < "$DOCKERFILE"
 
       - name: Set up Python
         if: inputs.lint_python || inputs.run_unit_tests || inputs.run_integration_tests
@@ -205,12 +238,60 @@ jobs:
 
       - name: Generate dependency cache manifest
         if: inputs.run_unit_tests || inputs.run_integration_tests
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: generate-dependency-cache-manifest
-          pip_extras: ${{ inputs.pip_install_extras }}
-          docker_context: ${{ inputs.docker_context }}
-          dependency_manifest_path: .github/.cache/python-deps-manifest.txt
+        env:
+          PIP_EXTRAS: ${{ inputs.pip_install_extras }}
+          DOCKER_CONTEXT: ${{ inputs.docker_context }}
+          DEPENDENCY_MANIFEST_PATH: .github/.cache/python-deps-manifest.txt
+        run: |
+          manifest_path="${DEPENDENCY_MANIFEST_PATH:-.github/.cache/python-deps-manifest.txt}"
+          docker_context="${DOCKER_CONTEXT:-.}"
+          pip_extras="${PIP_EXTRAS:-}"
+
+          mkdir -p "$(dirname "$manifest_path")"
+
+          append_file_hash() {
+            local file_path="$1"
+
+            if [ -f "$file_path" ]; then
+              printf 'file:%s sha256:%s\n' "$file_path" "$(sha256sum "$file_path" | awk '{print $1}')" >> "$manifest_path"
+            fi
+          }
+
+          {
+            printf 'schema:v1\n'
+            printf 'python_version:%s\n' "$(python -VV 2>&1 | tr '\n' ' ')"
+            printf 'pip_extras:%s\n' "$pip_extras"
+            printf 'docker_context:%s\n' "$docker_context"
+          } > "$manifest_path"
+
+          install_target=""
+          if [ -f pyproject.toml ]; then
+            install_target="."
+          elif [ -n "$docker_context" ] && [ -f "$docker_context/pyproject.toml" ]; then
+            install_target="$docker_context"
+          fi
+
+          printf 'install_target:%s\n' "$install_target" >> "$manifest_path"
+
+          if [ -n "$install_target" ]; then
+            if [ "$install_target" = "." ]; then
+              append_file_hash "pyproject.toml"
+              append_file_hash "uv.lock"
+              append_file_hash "poetry.lock"
+            else
+              append_file_hash "$install_target/pyproject.toml"
+              append_file_hash "$install_target/uv.lock"
+              append_file_hash "$install_target/poetry.lock"
+            fi
+          fi
+
+          append_file_hash "requirements.txt"
+          append_file_hash "requirements-dev.txt"
+
+          if [ "$docker_context" != "." ]; then
+            append_file_hash "$docker_context/requirements.txt"
+            append_file_hash "$docker_context/requirements-dev.txt"
+          fi
 
       - name: Configure Python dependency caching
         if: inputs.run_unit_tests || inputs.run_integration_tests
@@ -226,11 +307,49 @@ jobs:
 
       - name: Install project dependencies
         if: inputs.run_unit_tests || inputs.run_integration_tests
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: install-dependencies
-          pip_extras: ${{ inputs.pip_install_extras }}
-          docker_context: ${{ inputs.docker_context }}
+        env:
+          PIP_EXTRAS: ${{ inputs.pip_install_extras }}
+          DOCKER_CONTEXT: ${{ inputs.docker_context }}
+        run: |
+          export PIP_CACHE_DIR="${PIP_CACHE_DIR:-.cache/pip}"
+          export UV_CACHE_DIR="${UV_CACHE_DIR:-.cache/uv}"
+          mkdir -p "$PIP_CACHE_DIR" "$UV_CACHE_DIR"
+
+          python -m pip install --upgrade pip
+
+          install_target=""
+          if [ -f pyproject.toml ]; then
+            install_target="."
+          elif [ -n "$DOCKER_CONTEXT" ] && [ -f "$DOCKER_CONTEXT/pyproject.toml" ]; then
+            install_target="$DOCKER_CONTEXT"
+          fi
+
+          if [ -n "$install_target" ]; then
+            python -m pip install --upgrade uv
+            if [ -n "$PIP_EXTRAS" ]; then
+              uv pip install --system "${install_target}[${PIP_EXTRAS}]" \
+                || uv pip install --system "$install_target" \
+                || python -m pip install "${install_target}[${PIP_EXTRAS}]" \
+                || python -m pip install "$install_target"
+            else
+              uv pip install --system "$install_target" \
+                || python -m pip install "$install_target"
+            fi
+          fi
+
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+            if [ -f requirements-dev.txt ]; then
+              python -m pip install -r requirements-dev.txt
+            fi
+          fi
+
+          if [ -n "$DOCKER_CONTEXT" ] && [ "$DOCKER_CONTEXT" != "." ] && [ -f "$DOCKER_CONTEXT/requirements.txt" ]; then
+            python -m pip install -r "$DOCKER_CONTEXT/requirements.txt"
+            if [ -f "$DOCKER_CONTEXT/requirements-dev.txt" ]; then
+              python -m pip install -r "$DOCKER_CONTEXT/requirements-dev.txt"
+            fi
+          fi
 
       - name: Run unit tests
         if: inputs.run_unit_tests
@@ -298,28 +417,46 @@ jobs:
       - name: Generate Docker metadata for act
         if: env.LOCAL_ACT == 'true'
         id: meta-act
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: generate-docker-metadata
-          image_repository: ${{ steps.image-repository.outputs.image_repository }}
-          release_tag: ${{ inputs.release_tag }}
-          github_sha: ${{ github.sha }}
-          github_repository: ${{ github.repository }}
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          short_sha=$(printf '%s' "$GITHUB_SHA" | cut -c1-7)
+          primary_tag="${IMAGE_REPOSITORY}:sha-${short_sha}"
+
+          {
+            echo "tags<<EOF"
+            echo "$primary_tag"
+            if [ -n "$RELEASE_TAG" ]; then
+              echo "${IMAGE_REPOSITORY}:${RELEASE_TAG}"
+            fi
+            echo "EOF"
+            echo "labels<<EOF"
+            echo "org.opencontainers.image.source=${GITHUB_REPOSITORY}"
+            echo "org.opencontainers.image.revision=${GITHUB_SHA}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Capture image reference
         id: image-ref
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: capture-image-ref
-          meta_tags: ${{ steps.meta.outputs.tags != '' && steps.meta.outputs.tags || steps.meta-act.outputs.tags }}
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags != '' && steps.meta.outputs.tags || steps.meta-act.outputs.tags }}
+        run: |
+          primary_tag=$(printf '%s\n' "$META_TAGS" | head -n 1)
+          echo "image_ref=${primary_tag}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${primary_tag##*:}" >> "$GITHUB_OUTPUT"
 
       - name: Determine application version
         id: image-version
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: resolve-app-version
-          release_tag: ${{ inputs.release_tag }}
-          default_tag: ${{ steps.image-ref.outputs.image_tag }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          DEFAULT_TAG: ${{ steps.image-ref.outputs.image_tag }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            echo "value=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=$DEFAULT_TAG" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build container image
         id: build
@@ -341,21 +478,32 @@ jobs:
       - name: Smoke test built container
         if: inputs.run_container_smoke_test
         id: container-smoke-test
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: smoke-test-container
-          image_under_test: ${{ steps.image-ref.outputs.image_ref }}
-          container_smoke_test_command: ${{ inputs.container_smoke_test_command }}
-          push_image: ${{ inputs.push_image }}
+        env:
+          IMAGE_UNDER_TEST: ${{ steps.image-ref.outputs.image_ref }}
+          CONTAINER_SMOKE_TEST_COMMAND: ${{ inputs.container_smoke_test_command }}
+          PUSH_IMAGE: ${{ inputs.push_image }}
+        run: |
+          test -n "$IMAGE_UNDER_TEST" \
+            || { echo "Image reference could not be determined for smoke testing" >&2; exit 1; }
+
+          test -n "$CONTAINER_SMOKE_TEST_COMMAND" \
+            || { echo "container_smoke_test_command must not be empty when run_container_smoke_test is enabled" >&2; exit 1; }
+
+          if [ "$PUSH_IMAGE" = "true" ]; then
+            docker pull "$IMAGE_UNDER_TEST"
+          else
+            docker image inspect "$IMAGE_UNDER_TEST" >/dev/null
+          fi
+
+          bash -eo pipefail -c "$CONTAINER_SMOKE_TEST_COMMAND"
 
       - name: Capture immutable image reference
         if: inputs.push_image
         id: immutable-image
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: capture-immutable-image
-          image_repository: ${{ steps.image-repository.outputs.image_repository }}
-          image_digest: ${{ steps.build.outputs.digest }}
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "value=${IMAGE_REPOSITORY}@${IMAGE_DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Install Cosign
         if: inputs.push_image && inputs.release_tag != '' && inputs.sign_release
@@ -370,18 +518,36 @@ jobs:
       - name: Summarise results
         if: always()
         id: build-summary
-        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
-        with:
-          operation: build-summary
-          hadolint_outcome: ${{ steps.hadolint.outcome || 'skipped' }}
-          unit_outcome: ${{ steps.unit-tests.outcome || 'skipped' }}
-          int_outcome: ${{ steps.integration-tests.outcome || 'skipped' }}
-          container_smoke_outcome: ${{ steps.container-smoke-test.outcome || 'skipped' }}
-          push_image: ${{ inputs.push_image }}
-          image_ref: ${{ steps.image-ref.outputs.image_ref }}
-          immutable_image: ${{ steps.immutable-image.outputs.value || '' }}
-          build_outcome: ${{ steps.build.outcome || 'skipped' }}
-          summary_file: ci-summary.md
+        env:
+          HADOLINT_OUTCOME: ${{ steps.hadolint.outcome || 'skipped' }}
+          UNIT_OUTCOME: ${{ steps.unit-tests.outcome || 'skipped' }}
+          INT_OUTCOME: ${{ steps.integration-tests.outcome || 'skipped' }}
+          CONTAINER_SMOKE_OUTCOME: ${{ steps.container-smoke-test.outcome || 'skipped' }}
+          PUSH_IMAGE: ${{ inputs.push_image }}
+          IMAGE_REF: ${{ steps.image-ref.outputs.image_ref }}
+          IMMUTABLE_IMAGE: ${{ steps.immutable-image.outputs.value || '' }}
+          BUILD_OUTCOME: ${{ steps.build.outcome || 'skipped' }}
+          SUMMARY_FILE: ci-summary.md
+        run: |
+          {
+            echo "### Container Image Build"
+            echo "| Check | Result |"
+            echo "| --- | --- |"
+            echo "| Dockerfile lint | ${HADOLINT_OUTCOME} |"
+            echo "| Unit tests | ${UNIT_OUTCOME} |"
+            echo "| Integration tests | ${INT_OUTCOME} |"
+            echo "| Container smoke test | ${CONTAINER_SMOKE_OUTCOME} |"
+            if [ "$PUSH_IMAGE" = "true" ] && [ "$BUILD_OUTCOME" = "success" ]; then
+              echo ""
+              echo "**Image:** \`${IMAGE_REF}\`"
+              if [ -n "$IMMUTABLE_IMAGE" ]; then
+                echo ""
+                echo "**Immutable image:** \`${IMMUTABLE_IMAGE}\`"
+              fi
+            fi
+          } > "$SUMMARY_FILE"
+
+          cat "$SUMMARY_FILE" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Share summary in pull requests
         if: always() && github.event_name == 'pull_request' && env.LOCAL_ACT != 'true'
