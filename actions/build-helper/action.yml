@@ -131,7 +131,7 @@ runs:
         AWS_REGION: ${{ inputs.aws_region }}
         ECR_NAMESPACE: ${{ inputs.ecr_namespace }}
         APP_NAME: ${{ inputs.app_name }}
-      run: bash "${{ github.action_path }}/../../scripts/build/resolve-image-repository.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/resolve-image-repository.sh"
 
     - name: Resolve registry role
       if: inputs.operation == 'resolve-registry-role'
@@ -142,7 +142,7 @@ runs:
         REGISTRY_ROLE_NAME: ${{ inputs.registry_role_name }}
         REGISTRY_ROLE_ARN: ${{ inputs.registry_role_arn }}
         REGISTRY_ROLE_SECRET: ${{ inputs.registry_role_secret }}
-      run: bash "${{ github.action_path }}/../../scripts/build/resolve-registry-role.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/resolve-registry-role.sh"
 
     - name: Validate publish configuration
       if: inputs.operation == 'validate-publish-config'
@@ -151,14 +151,14 @@ runs:
         IMAGE_REPOSITORY: ${{ inputs.image_repository }}
         REGISTRY_HOST: ${{ inputs.registry_host }}
         AWS_REGISTRY_ROLE_TO_ASSUME: ${{ inputs.aws_registry_role_to_assume }}
-      run: bash "${{ github.action_path }}/../../scripts/build/validate-publish-config.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/validate-publish-config.sh"
 
     - name: Lint Dockerfile
       if: inputs.operation == 'lint-dockerfile'
       shell: bash
       env:
         DOCKERFILE: ${{ inputs.dockerfile }}
-      run: bash "${{ github.action_path }}/../../scripts/build/lint-dockerfile.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/lint-dockerfile.sh"
 
     - name: Generate dependency cache manifest
       if: inputs.operation == 'generate-dependency-cache-manifest'
@@ -167,7 +167,7 @@ runs:
         PIP_EXTRAS: ${{ inputs.pip_extras }}
         DOCKER_CONTEXT: ${{ inputs.docker_context }}
         DEPENDENCY_MANIFEST_PATH: ${{ inputs.dependency_manifest_path }}
-      run: bash "${{ github.action_path }}/../../scripts/build/generate-dependency-cache-manifest.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/generate-dependency-cache-manifest.sh"
 
     - name: Install dependencies
       if: inputs.operation == 'install-dependencies'
@@ -175,7 +175,7 @@ runs:
       env:
         PIP_EXTRAS: ${{ inputs.pip_extras }}
         DOCKER_CONTEXT: ${{ inputs.docker_context }}
-      run: bash "${{ github.action_path }}/../../scripts/build/install-dependencies.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/install-dependencies.sh"
 
     - name: Generate docker metadata
       if: inputs.operation == 'generate-docker-metadata'
@@ -186,7 +186,7 @@ runs:
         RELEASE_TAG: ${{ inputs.release_tag }}
         GITHUB_SHA: ${{ inputs.github_sha }}
         GITHUB_REPOSITORY: ${{ inputs.github_repository }}
-      run: bash "${{ github.action_path }}/../../scripts/build/generate-docker-metadata.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/generate-docker-metadata.sh"
 
     - name: Capture image reference
       if: inputs.operation == 'capture-image-ref'
@@ -194,7 +194,7 @@ runs:
       shell: bash
       env:
         META_TAGS: ${{ inputs.meta_tags }}
-      run: bash "${{ github.action_path }}/../../scripts/build/capture-image-ref.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/capture-image-ref.sh"
 
     - name: Resolve app version
       if: inputs.operation == 'resolve-app-version'
@@ -203,7 +203,7 @@ runs:
       env:
         RELEASE_TAG: ${{ inputs.release_tag }}
         DEFAULT_TAG: ${{ inputs.default_tag }}
-      run: bash "${{ github.action_path }}/../../scripts/build/resolve-app-version.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/resolve-app-version.sh"
 
     - name: Smoke test container
       if: inputs.operation == 'smoke-test-container'
@@ -212,7 +212,7 @@ runs:
         IMAGE_UNDER_TEST: ${{ inputs.image_under_test }}
         CONTAINER_SMOKE_TEST_COMMAND: ${{ inputs.container_smoke_test_command }}
         PUSH_IMAGE: ${{ inputs.push_image }}
-      run: bash "${{ github.action_path }}/../../scripts/build/smoke-test-container.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/smoke-test-container.sh"
 
     - name: Capture immutable image
       if: inputs.operation == 'capture-immutable-image'
@@ -221,7 +221,7 @@ runs:
       env:
         IMAGE_REPOSITORY: ${{ inputs.image_repository }}
         IMAGE_DIGEST: ${{ inputs.image_digest }}
-      run: bash "${{ github.action_path }}/../../scripts/build/capture-immutable-image.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/capture-immutable-image.sh"
 
     - name: Build summary
       if: inputs.operation == 'build-summary'
@@ -236,4 +236,4 @@ runs:
         IMAGE_REF: ${{ inputs.image_ref }}
         IMMUTABLE_IMAGE: ${{ inputs.immutable_image }}
         SUMMARY_FILE: ${{ inputs.summary_file }}
-      run: bash "${{ github.action_path }}/../../scripts/build/build-summary.sh"
+      run: bash "${{ github.action_path }}/../../.github/scripts/build/build-summary.sh"

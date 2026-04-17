@@ -58,7 +58,7 @@ jobs:
       matrix: ${{ steps.compute.outputs.matrix }}
     steps:
       - id: compute
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/deploy-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/deploy-helper@main
         with:
           operation: prepare-deploy
           raw_environments: ${{ inputs.deploy_environments }}
@@ -93,7 +93,7 @@ jobs:
           ref: ${{ inputs.deployment_checkout_ref != '' && inputs.deployment_checkout_ref || github.sha }}
 
       - name: Validate deployment configuration
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/deploy-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/deploy-helper@main
         with:
           operation: validate-deploy-config
           role_to_assume: ${{ matrix.environment.aws_role_to_assume || secrets.AWS_DEPLOY_ROLE }}
@@ -108,7 +108,7 @@ jobs:
 
       - name: Update Parameter Store image reference
         if: matrix.environment.ssm_parameter_name != ''
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/deploy-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/deploy-helper@main
         with:
           operation: update-ssm-parameter
           image_uri: ${{ inputs.immutable_image }}
@@ -161,14 +161,14 @@ jobs:
 
       - name: Smoke test deployed service
         if: matrix.environment.smoke_test_url != ''
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/deploy-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/deploy-helper@main
         with:
           operation: smoke-test-service
           url: ${{ matrix.environment.smoke_test_url }}
 
       - name: Append deployment summary
         if: always()
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/deploy-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/deploy-helper@main
         with:
           operation: deploy-summary
           deploy_environment: ${{ matrix.environment.name }}

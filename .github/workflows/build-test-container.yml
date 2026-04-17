@@ -144,7 +144,7 @@ jobs:
 
       - name: Resolve image repository
         id: image-repository
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: resolve-image-repository
           registry_hostname: ${{ inputs.registry_hostname }}
@@ -155,7 +155,7 @@ jobs:
 
       - name: Resolve registry role
         id: registry-role
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: resolve-registry-role
           registry_account_id: ${{ inputs.registry_account_id }}
@@ -165,7 +165,7 @@ jobs:
 
       - name: Validate publish configuration
         if: inputs.push_image || inputs.sign_release
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: validate-publish-config
           image_repository: ${{ steps.image-repository.outputs.image_repository }}
@@ -175,7 +175,7 @@ jobs:
       - name: Lint Dockerfile with Hadolint
         if: inputs.lint_dockerfile
         id: hadolint
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: lint-dockerfile
           dockerfile: ${{ inputs.dockerfile }}
@@ -205,7 +205,7 @@ jobs:
 
       - name: Generate dependency cache manifest
         if: inputs.run_unit_tests || inputs.run_integration_tests
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: generate-dependency-cache-manifest
           pip_extras: ${{ inputs.pip_install_extras }}
@@ -226,7 +226,7 @@ jobs:
 
       - name: Install project dependencies
         if: inputs.run_unit_tests || inputs.run_integration_tests
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: install-dependencies
           pip_extras: ${{ inputs.pip_install_extras }}
@@ -298,7 +298,7 @@ jobs:
       - name: Generate Docker metadata for act
         if: env.LOCAL_ACT == 'true'
         id: meta-act
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: generate-docker-metadata
           image_repository: ${{ steps.image-repository.outputs.image_repository }}
@@ -308,14 +308,14 @@ jobs:
 
       - name: Capture image reference
         id: image-ref
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: capture-image-ref
           meta_tags: ${{ steps.meta.outputs.tags != '' && steps.meta.outputs.tags || steps.meta-act.outputs.tags }}
 
       - name: Determine application version
         id: image-version
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: resolve-app-version
           release_tag: ${{ inputs.release_tag }}
@@ -341,7 +341,7 @@ jobs:
       - name: Smoke test built container
         if: inputs.run_container_smoke_test
         id: container-smoke-test
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: smoke-test-container
           image_under_test: ${{ steps.image-ref.outputs.image_ref }}
@@ -351,7 +351,7 @@ jobs:
       - name: Capture immutable image reference
         if: inputs.push_image
         id: immutable-image
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: capture-immutable-image
           image_repository: ${{ steps.image-repository.outputs.image_repository }}
@@ -370,7 +370,7 @@ jobs:
       - name: Summarise results
         if: always()
         id: build-summary
-        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        uses: ukhsa-collaboration/devops-application-cicd/actions/build-helper@main
         with:
           operation: build-summary
           hadolint_outcome: ${{ steps.hadolint.outcome || 'skipped' }}
