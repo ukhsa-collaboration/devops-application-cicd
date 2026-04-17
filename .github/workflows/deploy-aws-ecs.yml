@@ -56,15 +56,64 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.compute.outputs.matrix }}
-    env:
-      RAW_ENVIRONMENTS: ${{ inputs.deploy_environments }}
-      DEFAULT_DEPLOY_ROLE_NAME: ${{ inputs.aws_deploy_role_name }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
-
       - id: compute
-        run: python .github/scripts/deploy/prepare-deploy.py
+        env:
+          RAW_ENVIRONMENTS: ${{ inputs.deploy_environments }}
+          DEFAULT_DEPLOY_ROLE_NAME: ${{ inputs.aws_deploy_role_name }}
+        run: |
+          python <<'PY'
+          import json
+          import os
+
+          raw = (os.getenv("RAW_ENVIRONMENTS") or "").strip()
+
+          if not raw:
+              matrix = []
+          else:
+              try:
+                  data = json.loads(raw)
+              except json.JSONDecodeError as exc:
+                  raise SystemExit(f"deploy_environments must be valid JSON: {exc}")
+
+              if not isinstance(data, list):
+                  raise SystemExit("deploy_environments must be a JSON array")
+
+              service_identifier = os.getenv("SERVICE_IDENTIFIER") or ""
+              app = os.getenv("APP_NAME") or ""
+              region = os.getenv("AWS_REGION") or ""
+              default_deploy_role_name = os.getenv("DEFAULT_DEPLOY_ROLE_NAME") or ""
+              matrix = []
+
+              for item in data:
+                  if isinstance(item, str):
+                      obj = {"name": item}
+                  elif isinstance(item, dict):
+                      obj = dict(item)
+                  else:
+                      continue
+
+                  name = obj.get("name")
+                  if not name:
+                      continue
+
+                  env_lower = str(name).lower()
+                  aws_account_id = obj.get("aws_account_id") or ""
+                  aws_deploy_role_name = obj.get("aws_deploy_role_name") or default_deploy_role_name
+
+                  obj.setdefault("container_name", "app")
+                  obj.setdefault("task_definition", f"aw-{service_identifier}-{region}-{env_lower}-ecssvc-{app}")
+                  obj.setdefault("ecs_service", f"aw-{service_identifier}-{region}-{env_lower}-ecssvc-{app}")
+                  obj.setdefault("ecs_cluster", f"aw-{service_identifier}-{region}-{env_lower}-ecscluster")
+
+                  if not obj.get("aws_role_to_assume") and aws_account_id and aws_deploy_role_name:
+                      obj["aws_role_to_assume"] = f"arn:aws:iam::{aws_account_id}:role/{aws_deploy_role_name}"
+
+                  matrix.append(obj)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"matrix={json.dumps(matrix)}\n")
+          PY
 
   deploy:
     name: Deploy ${{ matrix.environment.name }}
@@ -86,7 +135,7 @@ jobs:
       actions: read
       pull-requests: none
     steps:
-      - name: Checkout repository
+      - name: Checkout caller repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
         with:
           ref: ${{ inputs.deployment_checkout_ref != '' && inputs.deployment_checkout_ref || github.sha }}
@@ -95,7 +144,12 @@ jobs:
         env:
           ROLE_TO_ASSUME: ${{ matrix.environment.aws_role_to_assume || secrets.AWS_DEPLOY_ROLE }}
           IMAGE_URI: ${{ inputs.immutable_image }}
-        run: bash .github/scripts/deploy/validate-deploy-config.sh
+        run: |
+          test -n "$IMAGE_URI" \
+            || { echo "immutable_image is required" >&2; exit 1; }
+
+          test -n "$ROLE_TO_ASSUME" \
+            || { echo "Deployment role is required via aws_role_to_assume or secret AWS_DEPLOY_ROLE" >&2; exit 1; }
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@5fd3084fc36e372ff1fff382a39b10d03659f355
@@ -109,7 +163,15 @@ jobs:
         env:
           IMAGE_URI: ${{ inputs.immutable_image }}
           PARAMETER_NAME: ${{ matrix.environment.ssm_parameter_name }}
-        run: bash .github/scripts/deploy/update-ssm-parameter.sh
+        run: |
+          test -n "$PARAMETER_NAME" \
+            || { echo "Parameter name missing" >&2; exit 1; }
+
+          aws ssm put-parameter \
+            --name "$PARAMETER_NAME" \
+            --type "String" \
+            --value "$IMAGE_URI" \
+            --overwrite
 
       - name: Download ECS task definition
         if: matrix.environment.task_definition != ''
@@ -160,7 +222,16 @@ jobs:
         if: matrix.environment.smoke_test_url != ''
         env:
           URL: ${{ matrix.environment.smoke_test_url }}
-        run: bash .github/scripts/deploy/smoke-test-service.sh
+        run: |
+          USER_AGENT="Mozilla/5.0 (compatible; SmokeTest/1.0)"
+          code=$(curl -A "$USER_AGENT" -L -s -o /dev/null -w "%{http_code}" "$URL")
+
+          if [ "$code" -ne 200 ]; then
+            echo "Smoke test failed with status $code for $URL" >&2
+            exit 1
+          fi
+
+          echo "Smoke test succeeded for $URL"
 
       - name: Append deployment summary
         if: always()
@@ -168,4 +239,12 @@ jobs:
           DEPLOY_ENVIRONMENT: ${{ matrix.environment.name }}
           DEPLOY_IMAGE: ${{ inputs.immutable_image }}
           SMOKE_TEST_URL: ${{ matrix.environment.smoke_test_url || '' }}
-        run: bash .github/scripts/deploy/deploy-summary.sh
+        run: |
+          {
+            echo "### Deployment (${DEPLOY_ENVIRONMENT})"
+            echo "Environment: ${DEPLOY_ENVIRONMENT}"
+            echo "Image: ${DEPLOY_IMAGE}"
+            if [ -n "${SMOKE_TEST_URL}" ]; then
+              echo "Smoke test: ${SMOKE_TEST_URL}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
