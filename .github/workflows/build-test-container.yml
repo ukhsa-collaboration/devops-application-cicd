@@ -1,0 +1,375 @@
+name: "Build Test Container"
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        required: true
+        type: string
+      service_identifier:
+        required: true
+        type: string
+      aws_region:
+        required: false
+        default: "eu-west-2"
+        type: string
+      runner_labels:
+        required: false
+        default: '["ubuntu-latest"]'
+        type: string
+      docker_context:
+        required: false
+        default: "."
+        type: string
+      dockerfile:
+        required: false
+        default: "Dockerfile"
+        type: string
+      registry_hostname:
+        required: false
+        default: ""
+        type: string
+      registry_account_id:
+        required: false
+        default: ""
+        type: string
+      aws_registry_role_name:
+        required: false
+        default: ""
+        type: string
+      aws_registry_role_to_assume:
+        required: false
+        default: ""
+        type: string
+      build_args:
+        required: false
+        default: ""
+        type: string
+      run_unit_tests:
+        required: false
+        default: true
+        type: boolean
+      unit_test_command:
+        required: false
+        default: "pytest -q"
+        type: string
+      run_integration_tests:
+        required: false
+        default: false
+        type: boolean
+      integration_test_command:
+        required: false
+        default: ""
+        type: string
+      integration_artifact_path:
+        required: false
+        default: "test-results/"
+        type: string
+      run_container_smoke_test:
+        required: false
+        default: false
+        type: boolean
+      container_smoke_test_command:
+        required: false
+        default: 'docker run --rm "$IMAGE_UNDER_TEST"'
+        type: string
+      push_image:
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        required: false
+        default: ""
+        type: string
+      sign_release:
+        required: false
+        default: false
+        type: boolean
+      lint_dockerfile:
+        required: false
+        default: true
+        type: boolean
+      lint_python:
+        required: false
+        default: true
+        type: boolean
+      pip_install_extras:
+        required: false
+        default: "dev"
+        type: string
+      ecr_registry_namespace:
+        required: false
+        default: ""
+        type: string
+    secrets:
+      AWS_REGISTRY_ROLE:
+        required: false
+    outputs:
+      image_digest:
+        value: ${{ jobs.build.outputs.image_digest }}
+      image_uri:
+        value: ${{ jobs.build.outputs.image_uri }}
+      immutable_image:
+        value: ${{ jobs.build.outputs.immutable_image }}
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+  pull-requests: write
+
+env:
+  APP_NAME: ${{ inputs.app_name }}
+  AWS_REGION: ${{ inputs.aws_region }}
+  ECR_NAMESPACE: ${{ inputs.ecr_registry_namespace || inputs.service_identifier }}
+  LOCAL_ACT: ${{ github.actor == 'nektos/act' && 'true' || 'false' }}
+
+jobs:
+  build:
+    name: Build and test image
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+      pull-requests: write
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+      image_uri: ${{ steps.image-ref.outputs.image_ref }}
+      immutable_image: ${{ steps.immutable-image.outputs.value }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+
+      - name: Resolve image repository
+        id: image-repository
+        env:
+          REGISTRY_HOSTNAME: ${{ inputs.registry_hostname }}
+          REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
+        run: bash .github/scripts/build/resolve-image-repository.sh
+
+      - name: Resolve registry role
+        id: registry-role
+        env:
+          REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
+          REGISTRY_ROLE_NAME: ${{ inputs.aws_registry_role_name }}
+          REGISTRY_ROLE_ARN: ${{ inputs.aws_registry_role_to_assume }}
+          REGISTRY_ROLE_SECRET: ${{ secrets.AWS_REGISTRY_ROLE }}
+        run: bash .github/scripts/build/resolve-registry-role.sh
+
+      - name: Validate publish configuration
+        if: inputs.push_image || inputs.sign_release
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
+          REGISTRY_HOST: ${{ steps.image-repository.outputs.registry_host }}
+          AWS_REGISTRY_ROLE_TO_ASSUME: ${{ steps.registry-role.outputs.value }}
+        run: bash .github/scripts/build/validate-publish-config.sh
+
+      - name: Lint Dockerfile with Hadolint
+        if: inputs.lint_dockerfile
+        id: hadolint
+        env:
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: bash .github/scripts/build/lint-dockerfile.sh
+
+      - name: Set up Python
+        if: inputs.lint_python || inputs.run_unit_tests || inputs.run_integration_tests
+        id: setup-python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+
+      - name: Install Ruff
+        if: inputs.lint_python
+        run: python -m pip install ruff
+
+      - name: Ruff formatting
+        if: inputs.lint_python
+        id: ruff-format
+        env:
+          NO_COLOR: 1
+        run: ruff format --check --diff ${{ inputs.docker_context }}
+
+      - name: Ruff linting
+        if: inputs.lint_python
+        id: ruff-lint
+        env:
+          NO_COLOR: 1
+        run: ruff check --diff ${{ inputs.docker_context }}
+
+      - name: Generate dependency cache manifest
+        if: inputs.run_unit_tests || inputs.run_integration_tests
+        env:
+          PIP_EXTRAS: ${{ inputs.pip_install_extras }}
+          DOCKER_CONTEXT: ${{ inputs.docker_context }}
+          DEPENDENCY_MANIFEST_PATH: .github/.cache/python-deps-manifest.txt
+        run: bash .github/scripts/build/generate-dependency-cache-manifest.sh
+
+      - name: Configure Python dependency caching
+        if: inputs.run_unit_tests || inputs.run_integration_tests
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            .cache/pip
+            .cache/uv
+          key: ${{ runner.os }}-pydeps-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('.github/.cache/python-deps-manifest.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pydeps-${{ steps.setup-python.outputs.python-version }}-
+            ${{ runner.os }}-pydeps-
+
+      - name: Install project dependencies
+        if: inputs.run_unit_tests || inputs.run_integration_tests
+        env:
+          PIP_EXTRAS: ${{ inputs.pip_install_extras }}
+          DOCKER_CONTEXT: ${{ inputs.docker_context }}
+        run: bash .github/scripts/build/install-dependencies.sh
+
+      - name: Run unit tests
+        if: inputs.run_unit_tests
+        id: unit-tests
+        env:
+          UNIT_TEST_COMMAND: ${{ inputs.unit_test_command }}
+        run: bash -eo pipefail -c "$UNIT_TEST_COMMAND"
+
+      - name: Upload coverage artifact
+        if: inputs.run_unit_tests && always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: coverage-report
+          path: |
+            coverage.xml
+            htmlcov/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Run integration tests
+        if: inputs.run_integration_tests
+        id: integration-tests
+        env:
+          INTEGRATION_TEST_COMMAND: ${{ inputs.integration_test_command }}
+        run: bash -eo pipefail -c "$INTEGRATION_TEST_COMMAND"
+
+      - name: Upload integration artifacts
+        if: inputs.run_integration_tests && always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: integration-artifacts
+          path: ${{ inputs.integration_artifact_path }}
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Configure AWS credentials
+        if: inputs.push_image || inputs.sign_release
+        uses: aws-actions/configure-aws-credentials@5fd3084fc36e372ff1fff382a39b10d03659f355
+        with:
+          role-to-assume: ${{ steps.registry-role.outputs.value }}
+          role-session-name: container-build-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: inputs.push_image
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076
+
+      - name: Extract Docker metadata
+        if: env.LOCAL_ACT != 'true'
+        id: meta
+        uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f
+        with:
+          images: ${{ steps.image-repository.outputs.image_repository }}
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ inputs.release_tag }},enable=${{ inputs.release_tag != '' }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp || github.event.pull_request.updated_at }}
+
+      - name: Generate Docker metadata for act
+        if: env.LOCAL_ACT == 'true'
+        id: meta-act
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: bash .github/scripts/build/generate-docker-metadata.sh
+
+      - name: Capture image reference
+        id: image-ref
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags != '' && steps.meta.outputs.tags || steps.meta-act.outputs.tags }}
+        run: bash .github/scripts/build/capture-image-ref.sh
+
+      - name: Determine application version
+        id: image-version
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          DEFAULT_TAG: ${{ steps.image-ref.outputs.image_tag }}
+        run: bash .github/scripts/build/resolve-app-version.sh
+
+      - name: Build container image
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        with:
+          context: ${{ inputs.docker_context }}
+          file: ${{ inputs.dockerfile }}
+          push: ${{ inputs.push_image }}
+          load: ${{ inputs.push_image == false }}
+          tags: ${{ steps.meta.outputs.tags != '' && steps.meta.outputs.tags || steps.meta-act.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels != '' && steps.meta.outputs.labels || steps.meta-act.outputs.labels }}
+          cache-from: ${{ inputs.push_image && format('type=registry,ref={0}:buildcache', steps.image-repository.outputs.image_repository) || '' }}
+          cache-to: ${{ inputs.push_image && 'type=inline' || '' }}
+          build-args: |
+            APP_CODE_COMMIT_HASH=${{ github.sha }}
+            APP_VERSION=${{ steps.image-version.outputs.value }}
+            ${{ inputs.build_args }}
+
+      - name: Smoke test built container
+        if: inputs.run_container_smoke_test
+        id: container-smoke-test
+        env:
+          IMAGE_UNDER_TEST: ${{ steps.image-ref.outputs.image_ref }}
+          CONTAINER_SMOKE_TEST_COMMAND: ${{ inputs.container_smoke_test_command }}
+          PUSH_IMAGE: ${{ inputs.push_image }}
+        run: bash .github/scripts/build/smoke-test-container.sh
+
+      - name: Capture immutable image reference
+        if: inputs.push_image
+        id: immutable-image
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: bash .github/scripts/build/capture-immutable-image.sh
+
+      - name: Install Cosign
+        if: inputs.push_image && inputs.release_tag != '' && inputs.sign_release
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159
+
+      - name: Sign release image digest
+        if: inputs.push_image && inputs.release_tag != '' && inputs.sign_release
+        env:
+          IMAGE: ${{ steps.immutable-image.outputs.value }}
+        run: cosign sign --yes "$IMAGE"
+
+      - name: Summarise results
+        if: always()
+        id: build-summary
+        env:
+          HADOLINT_OUTCOME: ${{ steps.hadolint.outcome || 'skipped' }}
+          UNIT_OUTCOME: ${{ steps.unit-tests.outcome || 'skipped' }}
+          INT_OUTCOME: ${{ steps.integration-tests.outcome || 'skipped' }}
+          CONTAINER_SMOKE_OUTCOME: ${{ steps.container-smoke-test.outcome || 'skipped' }}
+          PUSH_IMAGE: ${{ inputs.push_image }}
+          IMAGE_REF: ${{ steps.image-ref.outputs.image_ref }}
+          IMMUTABLE_IMAGE: ${{ steps.immutable-image.outputs.value || '' }}
+          BUILD_OUTCOME: ${{ steps.build.outcome || 'skipped' }}
+          SUMMARY_FILE: ci-summary.md
+        run: bash .github/scripts/build/build-summary.sh
+
+      - name: Share summary in pull requests
+        if: always() && github.event_name == 'pull_request' && env.LOCAL_ACT != 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            const postBuildSummary = require('./.github/scripts/build/pr-summary-comment.js');
+            await postBuildSummary({ github, context, core });

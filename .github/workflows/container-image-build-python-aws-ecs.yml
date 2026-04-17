@@ -1,0 +1,212 @@
+name: "Container Image Build - Python/AWS ECS"
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: Name of the application; used for tagging images and deployment messaging.
+        required: true
+        type: string
+      service_identifier:
+        description: Identifier used to build registry paths and deployment resource names.
+        required: true
+        type: string
+      aws_region:
+        description: AWS Region for registry, signing, and deployment operations.
+        required: false
+        default: "eu-west-2"
+        type: string
+      runner_labels:
+        description: JSON array of labels for the runner (e.g. '["ubuntu-latest"]' or '["self-hosted","linux"]').
+        required: false
+        default: '["ubuntu-latest"]'
+        type: string
+      docker_context:
+        description: Build context that contains the Dockerfile.
+        required: false
+        default: "."
+        type: string
+      dockerfile:
+        description: Relative path to the Dockerfile.
+        required: false
+        default: "Dockerfile"
+        type: string
+      registry_hostname:
+        description: Override the container registry hostname. When omitted, ECR is derived from registry_account_id and aws_region.
+        required: false
+        default: ""
+        type: string
+      registry_account_id:
+        description: AWS account id that owns the ECR registry.
+        required: false
+        default: ""
+        type: string
+      aws_registry_role_name:
+        description: IAM role name in the central registry account for image push and signing operations.
+        required: false
+        default: ""
+        type: string
+      aws_registry_role_to_assume:
+        description: IAM role ARN assumed in the central registry account for image push and signing operations.
+        required: false
+        default: ""
+        type: string
+      build_args:
+        description: Optional newline-delimited string of Docker build args (KEY=VALUE per line).
+        required: false
+        default: ""
+        type: string
+      run_unit_tests:
+        description: Enable or disable unit test execution.
+        required: false
+        default: true
+        type: boolean
+      unit_test_command:
+        description: Command used to execute unit tests.
+        required: false
+        default: "pytest -q"
+        type: string
+      run_integration_tests:
+        description: Enable integration tests during the build job.
+        required: false
+        default: false
+        type: boolean
+      integration_test_command:
+        description: Command used to execute integration tests during the build job.
+        required: false
+        default: ""
+        type: string
+      integration_artifact_path:
+        description: Path (file or directory) to upload after integration tests run.
+        required: false
+        default: "test-results/"
+        type: string
+      run_container_smoke_test:
+        description: Run a post-build smoke test against the built container image.
+        required: false
+        default: false
+        type: boolean
+      container_smoke_test_command:
+        description: Command used to validate the built image. Receives IMAGE_UNDER_TEST in the environment.
+        required: false
+        default: 'docker run --rm "$IMAGE_UNDER_TEST"'
+        type: string
+      push_image:
+        description: Push the image to the remote registry after a successful build.
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: Optional release tag applied to the built image.
+        required: false
+        default: ""
+        type: string
+      sign_release:
+        description: Sign the pushed image digest with Cosign.
+        required: false
+        default: false
+        type: boolean
+      lint_dockerfile:
+        description: Run Hadolint against the Dockerfile.
+        required: false
+        default: true
+        type: boolean
+      lint_python:
+        description: Run Ruff format and lint checks.
+        required: false
+        default: true
+        type: boolean
+      pip_install_extras:
+        description: Optional PEP 508 extras (e.g. "dev") to install when pyproject.toml is present.
+        required: false
+        default: "dev"
+        type: string
+      deploy_environments:
+        description: JSON array of deployment descriptors consumed by the ECS deploy workflow.
+        required: false
+        default: "[]"
+        type: string
+      aws_deploy_role_name:
+        description: Default IAM role name to assume in workload accounts when deploy environments specify aws_account_id.
+        required: false
+        default: ""
+        type: string
+      deployment_checkout_ref:
+        description: Optional ref (branch, tag, SHA) to checkout for deployment scripts/tests.
+        required: false
+        default: ""
+        type: string
+      ecr_registry_namespace:
+        description: The ECR registry namespace. Uses service_identifier if left empty.
+        required: false
+        default: ""
+        type: string
+    secrets:
+      AWS_REGISTRY_ROLE:
+        required: false
+      AWS_DEPLOY_ROLE:
+        required: false
+    outputs:
+      image_digest:
+        description: Digest produced by the image build.
+        value: ${{ jobs.build.outputs.image_digest }}
+      image_uri:
+        description: Primary tagged image reference from the build workflow.
+        value: ${{ jobs.build.outputs.image_uri }}
+      immutable_image:
+        description: Immutable pushed image reference in digest form.
+        value: ${{ jobs.build.outputs.immutable_image }}
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+  pull-requests: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-test-container.yml
+    with:
+      app_name: ${{ inputs.app_name }}
+      service_identifier: ${{ inputs.service_identifier }}
+      aws_region: ${{ inputs.aws_region }}
+      runner_labels: ${{ inputs.runner_labels }}
+      docker_context: ${{ inputs.docker_context }}
+      dockerfile: ${{ inputs.dockerfile }}
+      registry_hostname: ${{ inputs.registry_hostname }}
+      registry_account_id: ${{ inputs.registry_account_id }}
+      aws_registry_role_name: ${{ inputs.aws_registry_role_name }}
+      aws_registry_role_to_assume: ${{ inputs.aws_registry_role_to_assume }}
+      build_args: ${{ inputs.build_args }}
+      run_unit_tests: ${{ inputs.run_unit_tests }}
+      unit_test_command: ${{ inputs.unit_test_command }}
+      run_integration_tests: ${{ inputs.run_integration_tests }}
+      integration_test_command: ${{ inputs.integration_test_command }}
+      integration_artifact_path: ${{ inputs.integration_artifact_path }}
+      run_container_smoke_test: ${{ inputs.run_container_smoke_test }}
+      container_smoke_test_command: ${{ inputs.container_smoke_test_command }}
+      push_image: ${{ inputs.push_image }}
+      release_tag: ${{ inputs.release_tag }}
+      sign_release: ${{ inputs.sign_release }}
+      lint_dockerfile: ${{ inputs.lint_dockerfile }}
+      lint_python: ${{ inputs.lint_python }}
+      pip_install_extras: ${{ inputs.pip_install_extras }}
+      ecr_registry_namespace: ${{ inputs.ecr_registry_namespace }}
+    secrets:
+      AWS_REGISTRY_ROLE: ${{ secrets.AWS_REGISTRY_ROLE }}
+
+  deploy:
+    needs: build
+    if: inputs.push_image && inputs.release_tag != '' && inputs.deploy_environments != '[]'
+    uses: ./.github/workflows/deploy-aws-ecs.yml
+    with:
+      app_name: ${{ inputs.app_name }}
+      service_identifier: ${{ inputs.service_identifier }}
+      aws_region: ${{ inputs.aws_region }}
+      runner_labels: ${{ inputs.runner_labels }}
+      immutable_image: ${{ needs.build.outputs.immutable_image }}
+      deploy_environments: ${{ inputs.deploy_environments }}
+      aws_deploy_role_name: ${{ inputs.aws_deploy_role_name }}
+      deployment_checkout_ref: ${{ inputs.deployment_checkout_ref }}
+    secrets:
+      AWS_DEPLOY_ROLE: ${{ secrets.AWS_DEPLOY_ROLE }}

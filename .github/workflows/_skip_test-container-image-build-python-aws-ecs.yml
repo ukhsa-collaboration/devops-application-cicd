@@ -1,0 +1,21 @@
+name: "Test Container Image Build Workflow - Python"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - .github/workflows/_test-container-image-build-python-aws-ecs.yml
+      - .github/workflows/container-image-build-python-aws-ecs.yml
+      - .github/workflows/build-test-container.yml
+      - .github/workflows/deploy-aws-ecs.yml
+      - .github/scripts/build/**
+      - .github/scripts/deploy/**
+      - docs/container-image-build-python-aws-ecs.md
+
+jobs:
+  container_image_build_regression_test:
+    name: No workflow changes detected
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo "No build required" '
