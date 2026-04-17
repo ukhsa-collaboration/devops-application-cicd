@@ -57,27 +57,15 @@ jobs:
     outputs:
       matrix: ${{ steps.compute.outputs.matrix }}
     steps:
-      - name: Resolve workflow source ref
-        id: workflow-source-ref
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-        run: |
-          ref="${WORKFLOW_REF##*@}"
-          test -n "$ref" || { echo "Unable to resolve workflow source ref from github.workflow_ref=$WORKFLOW_REF" >&2; exit 1; }
-          echo "value=$ref" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout workflow source
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
-        with:
-          repository: ukhsa-collaboration/devops-application-cicd
-          ref: ${{ steps.workflow-source-ref.outputs.value }}
-          path: .workflow-source
-
       - id: compute
-        env:
-          RAW_ENVIRONMENTS: ${{ inputs.deploy_environments }}
-          DEFAULT_DEPLOY_ROLE_NAME: ${{ inputs.aws_deploy_role_name }}
-        run: python .workflow-source/.github/scripts/deploy/prepare-deploy.py
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/deploy-helper@main
+        with:
+          operation: prepare-deploy
+          raw_environments: ${{ inputs.deploy_environments }}
+          service_identifier: ${{ env.SERVICE_IDENTIFIER }}
+          app_name: ${{ env.APP_NAME }}
+          aws_region: ${{ env.AWS_REGION }}
+          default_deploy_role_name: ${{ inputs.aws_deploy_role_name }}
 
   deploy:
     name: Deploy ${{ matrix.environment.name }}
@@ -104,27 +92,12 @@ jobs:
         with:
           ref: ${{ inputs.deployment_checkout_ref != '' && inputs.deployment_checkout_ref || github.sha }}
 
-      - name: Resolve workflow source ref
-        id: workflow-source-ref
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-        run: |
-          ref="${WORKFLOW_REF##*@}"
-          test -n "$ref" || { echo "Unable to resolve workflow source ref from github.workflow_ref=$WORKFLOW_REF" >&2; exit 1; }
-          echo "value=$ref" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout workflow source
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
-        with:
-          repository: ukhsa-collaboration/devops-application-cicd
-          ref: ${{ steps.workflow-source-ref.outputs.value }}
-          path: .workflow-source
-
       - name: Validate deployment configuration
-        env:
-          ROLE_TO_ASSUME: ${{ matrix.environment.aws_role_to_assume || secrets.AWS_DEPLOY_ROLE }}
-          IMAGE_URI: ${{ inputs.immutable_image }}
-        run: bash .workflow-source/.github/scripts/deploy/validate-deploy-config.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/deploy-helper@main
+        with:
+          operation: validate-deploy-config
+          role_to_assume: ${{ matrix.environment.aws_role_to_assume || secrets.AWS_DEPLOY_ROLE }}
+          image_uri: ${{ inputs.immutable_image }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@5fd3084fc36e372ff1fff382a39b10d03659f355
@@ -135,10 +108,11 @@ jobs:
 
       - name: Update Parameter Store image reference
         if: matrix.environment.ssm_parameter_name != ''
-        env:
-          IMAGE_URI: ${{ inputs.immutable_image }}
-          PARAMETER_NAME: ${{ matrix.environment.ssm_parameter_name }}
-        run: bash .workflow-source/.github/scripts/deploy/update-ssm-parameter.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/deploy-helper@main
+        with:
+          operation: update-ssm-parameter
+          image_uri: ${{ inputs.immutable_image }}
+          parameter_name: ${{ matrix.environment.ssm_parameter_name }}
 
       - name: Download ECS task definition
         if: matrix.environment.task_definition != ''
@@ -187,14 +161,16 @@ jobs:
 
       - name: Smoke test deployed service
         if: matrix.environment.smoke_test_url != ''
-        env:
-          URL: ${{ matrix.environment.smoke_test_url }}
-        run: bash .workflow-source/.github/scripts/deploy/smoke-test-service.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/deploy-helper@main
+        with:
+          operation: smoke-test-service
+          url: ${{ matrix.environment.smoke_test_url }}
 
       - name: Append deployment summary
         if: always()
-        env:
-          DEPLOY_ENVIRONMENT: ${{ matrix.environment.name }}
-          DEPLOY_IMAGE: ${{ inputs.immutable_image }}
-          SMOKE_TEST_URL: ${{ matrix.environment.smoke_test_url || '' }}
-        run: bash .workflow-source/.github/scripts/deploy/deploy-summary.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/deploy-helper@main
+        with:
+          operation: deploy-summary
+          deploy_environment: ${{ matrix.environment.name }}
+          deploy_image: ${{ inputs.immutable_image }}
+          smoke_test_url: ${{ matrix.environment.smoke_test_url || '' }}

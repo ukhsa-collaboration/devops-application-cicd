@@ -1,0 +1,94 @@
+name: Deploy Helper
+description: Runs deploy helper scripts bundled with this repository.
+
+inputs:
+  operation:
+    description: Helper operation to execute.
+    required: true
+  raw_environments:
+    required: false
+    default: ""
+  service_identifier:
+    required: false
+    default: ""
+  app_name:
+    required: false
+    default: ""
+  aws_region:
+    required: false
+    default: ""
+  default_deploy_role_name:
+    required: false
+    default: ""
+  image_uri:
+    required: false
+    default: ""
+  role_to_assume:
+    required: false
+    default: ""
+  parameter_name:
+    required: false
+    default: ""
+  url:
+    required: false
+    default: ""
+  deploy_environment:
+    required: false
+    default: ""
+  deploy_image:
+    required: false
+    default: ""
+  smoke_test_url:
+    required: false
+    default: ""
+
+outputs:
+  matrix:
+    value: ${{ steps.prepare-deploy.outputs.matrix }}
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare deploy matrix
+      if: inputs.operation == 'prepare-deploy'
+      id: prepare-deploy
+      shell: bash
+      env:
+        RAW_ENVIRONMENTS: ${{ inputs.raw_environments }}
+        SERVICE_IDENTIFIER: ${{ inputs.service_identifier }}
+        APP_NAME: ${{ inputs.app_name }}
+        AWS_REGION: ${{ inputs.aws_region }}
+        DEFAULT_DEPLOY_ROLE_NAME: ${{ inputs.default_deploy_role_name }}
+      run: python "${{ github.action_path }}/../../scripts/deploy/prepare-deploy.py"
+
+    - name: Validate deploy configuration
+      if: inputs.operation == 'validate-deploy-config'
+      shell: bash
+      env:
+        IMAGE_URI: ${{ inputs.image_uri }}
+        ROLE_TO_ASSUME: ${{ inputs.role_to_assume }}
+      run: bash "${{ github.action_path }}/../../scripts/deploy/validate-deploy-config.sh"
+
+    - name: Update SSM parameter
+      if: inputs.operation == 'update-ssm-parameter'
+      shell: bash
+      env:
+        IMAGE_URI: ${{ inputs.image_uri }}
+        PARAMETER_NAME: ${{ inputs.parameter_name }}
+      run: bash "${{ github.action_path }}/../../scripts/deploy/update-ssm-parameter.sh"
+
+    - name: Smoke test service
+      if: inputs.operation == 'smoke-test-service'
+      shell: bash
+      env:
+        URL: ${{ inputs.url }}
+      run: bash "${{ github.action_path }}/../../scripts/deploy/smoke-test-service.sh"
+
+    - name: Deploy summary
+      if: inputs.operation == 'deploy-summary'
+      shell: bash
+      env:
+        DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
+        DEPLOY_IMAGE: ${{ inputs.deploy_image }}
+        SMOKE_TEST_URL: ${{ inputs.smoke_test_url }}
+      run: bash "${{ github.action_path }}/../../scripts/deploy/deploy-summary.sh"

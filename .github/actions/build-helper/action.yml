@@ -1,0 +1,239 @@
+name: Build Helper
+description: Runs build helper scripts bundled with this repository.
+
+inputs:
+  operation:
+    description: Helper operation to execute.
+    required: true
+  registry_hostname:
+    required: false
+    default: ""
+  registry_account_id:
+    required: false
+    default: ""
+  aws_region:
+    required: false
+    default: ""
+  ecr_namespace:
+    required: false
+    default: ""
+  app_name:
+    required: false
+    default: ""
+  registry_role_name:
+    required: false
+    default: ""
+  registry_role_arn:
+    required: false
+    default: ""
+  registry_role_secret:
+    required: false
+    default: ""
+  image_repository:
+    required: false
+    default: ""
+  registry_host:
+    required: false
+    default: ""
+  aws_registry_role_to_assume:
+    required: false
+    default: ""
+  dockerfile:
+    required: false
+    default: ""
+  pip_extras:
+    required: false
+    default: ""
+  docker_context:
+    required: false
+    default: "."
+  dependency_manifest_path:
+    required: false
+    default: ""
+  meta_tags:
+    required: false
+    default: ""
+  release_tag:
+    required: false
+    default: ""
+  default_tag:
+    required: false
+    default: ""
+  github_sha:
+    required: false
+    default: ""
+  github_repository:
+    required: false
+    default: ""
+  image_under_test:
+    required: false
+    default: ""
+  container_smoke_test_command:
+    required: false
+    default: ""
+  push_image:
+    required: false
+    default: ""
+  image_digest:
+    required: false
+    default: ""
+  hadolint_outcome:
+    required: false
+    default: ""
+  unit_outcome:
+    required: false
+    default: ""
+  int_outcome:
+    required: false
+    default: ""
+  container_smoke_outcome:
+    required: false
+    default: ""
+  build_outcome:
+    required: false
+    default: ""
+  image_ref:
+    required: false
+    default: ""
+  immutable_image:
+    required: false
+    default: ""
+  summary_file:
+    required: false
+    default: ""
+
+outputs:
+  registry_host:
+    value: ${{ steps.resolve-image-repository.outputs.registry_host }}
+  image_repository:
+    value: ${{ steps.resolve-image-repository.outputs.image_repository }}
+  value:
+    value: ${{ steps.resolve-registry-role.outputs.value || steps.resolve-app-version.outputs.value || steps.capture-immutable-image.outputs.value }}
+  image_ref:
+    value: ${{ steps.capture-image-ref.outputs.image_ref }}
+  image_tag:
+    value: ${{ steps.capture-image-ref.outputs.image_tag }}
+  tags:
+    value: ${{ steps.generate-docker-metadata.outputs.tags }}
+  labels:
+    value: ${{ steps.generate-docker-metadata.outputs.labels }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve image repository
+      if: inputs.operation == 'resolve-image-repository'
+      id: resolve-image-repository
+      shell: bash
+      env:
+        REGISTRY_HOSTNAME: ${{ inputs.registry_hostname }}
+        REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
+        AWS_REGION: ${{ inputs.aws_region }}
+        ECR_NAMESPACE: ${{ inputs.ecr_namespace }}
+        APP_NAME: ${{ inputs.app_name }}
+      run: bash "${{ github.action_path }}/../../scripts/build/resolve-image-repository.sh"
+
+    - name: Resolve registry role
+      if: inputs.operation == 'resolve-registry-role'
+      id: resolve-registry-role
+      shell: bash
+      env:
+        REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
+        REGISTRY_ROLE_NAME: ${{ inputs.registry_role_name }}
+        REGISTRY_ROLE_ARN: ${{ inputs.registry_role_arn }}
+        REGISTRY_ROLE_SECRET: ${{ inputs.registry_role_secret }}
+      run: bash "${{ github.action_path }}/../../scripts/build/resolve-registry-role.sh"
+
+    - name: Validate publish configuration
+      if: inputs.operation == 'validate-publish-config'
+      shell: bash
+      env:
+        IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+        REGISTRY_HOST: ${{ inputs.registry_host }}
+        AWS_REGISTRY_ROLE_TO_ASSUME: ${{ inputs.aws_registry_role_to_assume }}
+      run: bash "${{ github.action_path }}/../../scripts/build/validate-publish-config.sh"
+
+    - name: Lint Dockerfile
+      if: inputs.operation == 'lint-dockerfile'
+      shell: bash
+      env:
+        DOCKERFILE: ${{ inputs.dockerfile }}
+      run: bash "${{ github.action_path }}/../../scripts/build/lint-dockerfile.sh"
+
+    - name: Generate dependency cache manifest
+      if: inputs.operation == 'generate-dependency-cache-manifest'
+      shell: bash
+      env:
+        PIP_EXTRAS: ${{ inputs.pip_extras }}
+        DOCKER_CONTEXT: ${{ inputs.docker_context }}
+        DEPENDENCY_MANIFEST_PATH: ${{ inputs.dependency_manifest_path }}
+      run: bash "${{ github.action_path }}/../../scripts/build/generate-dependency-cache-manifest.sh"
+
+    - name: Install dependencies
+      if: inputs.operation == 'install-dependencies'
+      shell: bash
+      env:
+        PIP_EXTRAS: ${{ inputs.pip_extras }}
+        DOCKER_CONTEXT: ${{ inputs.docker_context }}
+      run: bash "${{ github.action_path }}/../../scripts/build/install-dependencies.sh"
+
+    - name: Generate docker metadata
+      if: inputs.operation == 'generate-docker-metadata'
+      id: generate-docker-metadata
+      shell: bash
+      env:
+        IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+        RELEASE_TAG: ${{ inputs.release_tag }}
+        GITHUB_SHA: ${{ inputs.github_sha }}
+        GITHUB_REPOSITORY: ${{ inputs.github_repository }}
+      run: bash "${{ github.action_path }}/../../scripts/build/generate-docker-metadata.sh"
+
+    - name: Capture image reference
+      if: inputs.operation == 'capture-image-ref'
+      id: capture-image-ref
+      shell: bash
+      env:
+        META_TAGS: ${{ inputs.meta_tags }}
+      run: bash "${{ github.action_path }}/../../scripts/build/capture-image-ref.sh"
+
+    - name: Resolve app version
+      if: inputs.operation == 'resolve-app-version'
+      id: resolve-app-version
+      shell: bash
+      env:
+        RELEASE_TAG: ${{ inputs.release_tag }}
+        DEFAULT_TAG: ${{ inputs.default_tag }}
+      run: bash "${{ github.action_path }}/../../scripts/build/resolve-app-version.sh"
+
+    - name: Smoke test container
+      if: inputs.operation == 'smoke-test-container'
+      shell: bash
+      env:
+        IMAGE_UNDER_TEST: ${{ inputs.image_under_test }}
+        CONTAINER_SMOKE_TEST_COMMAND: ${{ inputs.container_smoke_test_command }}
+        PUSH_IMAGE: ${{ inputs.push_image }}
+      run: bash "${{ github.action_path }}/../../scripts/build/smoke-test-container.sh"
+
+    - name: Capture immutable image
+      if: inputs.operation == 'capture-immutable-image'
+      id: capture-immutable-image
+      shell: bash
+      env:
+        IMAGE_REPOSITORY: ${{ inputs.image_repository }}
+        IMAGE_DIGEST: ${{ inputs.image_digest }}
+      run: bash "${{ github.action_path }}/../../scripts/build/capture-immutable-image.sh"
+
+    - name: Build summary
+      if: inputs.operation == 'build-summary'
+      shell: bash
+      env:
+        HADOLINT_OUTCOME: ${{ inputs.hadolint_outcome }}
+        UNIT_OUTCOME: ${{ inputs.unit_outcome }}
+        INT_OUTCOME: ${{ inputs.int_outcome }}
+        CONTAINER_SMOKE_OUTCOME: ${{ inputs.container_smoke_outcome }}
+        BUILD_OUTCOME: ${{ inputs.build_outcome }}
+        PUSH_IMAGE: ${{ inputs.push_image }}
+        IMAGE_REF: ${{ inputs.image_ref }}
+        IMMUTABLE_IMAGE: ${{ inputs.immutable_image }}
+        SUMMARY_FILE: ${{ inputs.summary_file }}
+      run: bash "${{ github.action_path }}/../../scripts/build/build-summary.sh"

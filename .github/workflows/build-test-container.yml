@@ -142,52 +142,43 @@ jobs:
       - name: Checkout caller repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
 
-      - name: Resolve workflow source ref
-        id: workflow-source-ref
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-        run: |
-          ref="${WORKFLOW_REF##*@}"
-          test -n "$ref" || { echo "Unable to resolve workflow source ref from github.workflow_ref=$WORKFLOW_REF" >&2; exit 1; }
-          echo "value=$ref" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout workflow source
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
-        with:
-          repository: ukhsa-collaboration/devops-application-cicd
-          ref: ${{ steps.workflow-source-ref.outputs.value }}
-          path: .workflow-source
-
       - name: Resolve image repository
         id: image-repository
-        env:
-          REGISTRY_HOSTNAME: ${{ inputs.registry_hostname }}
-          REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
-        run: bash .workflow-source/.github/scripts/build/resolve-image-repository.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: resolve-image-repository
+          registry_hostname: ${{ inputs.registry_hostname }}
+          registry_account_id: ${{ inputs.registry_account_id }}
+          aws_region: ${{ env.AWS_REGION }}
+          ecr_namespace: ${{ env.ECR_NAMESPACE }}
+          app_name: ${{ env.APP_NAME }}
 
       - name: Resolve registry role
         id: registry-role
-        env:
-          REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
-          REGISTRY_ROLE_NAME: ${{ inputs.aws_registry_role_name }}
-          REGISTRY_ROLE_ARN: ${{ inputs.aws_registry_role_to_assume }}
-          REGISTRY_ROLE_SECRET: ${{ secrets.AWS_REGISTRY_ROLE }}
-        run: bash .workflow-source/.github/scripts/build/resolve-registry-role.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: resolve-registry-role
+          registry_account_id: ${{ inputs.registry_account_id }}
+          registry_role_name: ${{ inputs.aws_registry_role_name }}
+          registry_role_arn: ${{ inputs.aws_registry_role_to_assume }}
+          registry_role_secret: ${{ secrets.AWS_REGISTRY_ROLE }}
 
       - name: Validate publish configuration
         if: inputs.push_image || inputs.sign_release
-        env:
-          IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
-          REGISTRY_HOST: ${{ steps.image-repository.outputs.registry_host }}
-          AWS_REGISTRY_ROLE_TO_ASSUME: ${{ steps.registry-role.outputs.value }}
-        run: bash .workflow-source/.github/scripts/build/validate-publish-config.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: validate-publish-config
+          image_repository: ${{ steps.image-repository.outputs.image_repository }}
+          registry_host: ${{ steps.image-repository.outputs.registry_host }}
+          aws_registry_role_to_assume: ${{ steps.registry-role.outputs.value }}
 
       - name: Lint Dockerfile with Hadolint
         if: inputs.lint_dockerfile
         id: hadolint
-        env:
-          DOCKERFILE: ${{ inputs.dockerfile }}
-        run: bash .workflow-source/.github/scripts/build/lint-dockerfile.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: lint-dockerfile
+          dockerfile: ${{ inputs.dockerfile }}
 
       - name: Set up Python
         if: inputs.lint_python || inputs.run_unit_tests || inputs.run_integration_tests
@@ -214,11 +205,12 @@ jobs:
 
       - name: Generate dependency cache manifest
         if: inputs.run_unit_tests || inputs.run_integration_tests
-        env:
-          PIP_EXTRAS: ${{ inputs.pip_install_extras }}
-          DOCKER_CONTEXT: ${{ inputs.docker_context }}
-          DEPENDENCY_MANIFEST_PATH: .github/.cache/python-deps-manifest.txt
-        run: bash .workflow-source/.github/scripts/build/generate-dependency-cache-manifest.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: generate-dependency-cache-manifest
+          pip_extras: ${{ inputs.pip_install_extras }}
+          docker_context: ${{ inputs.docker_context }}
+          dependency_manifest_path: .github/.cache/python-deps-manifest.txt
 
       - name: Configure Python dependency caching
         if: inputs.run_unit_tests || inputs.run_integration_tests
@@ -234,10 +226,11 @@ jobs:
 
       - name: Install project dependencies
         if: inputs.run_unit_tests || inputs.run_integration_tests
-        env:
-          PIP_EXTRAS: ${{ inputs.pip_install_extras }}
-          DOCKER_CONTEXT: ${{ inputs.docker_context }}
-        run: bash .workflow-source/.github/scripts/build/install-dependencies.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: install-dependencies
+          pip_extras: ${{ inputs.pip_install_extras }}
+          docker_context: ${{ inputs.docker_context }}
 
       - name: Run unit tests
         if: inputs.run_unit_tests
@@ -305,23 +298,28 @@ jobs:
       - name: Generate Docker metadata for act
         if: env.LOCAL_ACT == 'true'
         id: meta-act
-        env:
-          IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: bash .workflow-source/.github/scripts/build/generate-docker-metadata.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: generate-docker-metadata
+          image_repository: ${{ steps.image-repository.outputs.image_repository }}
+          release_tag: ${{ inputs.release_tag }}
+          github_sha: ${{ github.sha }}
+          github_repository: ${{ github.repository }}
 
       - name: Capture image reference
         id: image-ref
-        env:
-          META_TAGS: ${{ steps.meta.outputs.tags != '' && steps.meta.outputs.tags || steps.meta-act.outputs.tags }}
-        run: bash .workflow-source/.github/scripts/build/capture-image-ref.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: capture-image-ref
+          meta_tags: ${{ steps.meta.outputs.tags != '' && steps.meta.outputs.tags || steps.meta-act.outputs.tags }}
 
       - name: Determine application version
         id: image-version
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          DEFAULT_TAG: ${{ steps.image-ref.outputs.image_tag }}
-        run: bash .workflow-source/.github/scripts/build/resolve-app-version.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: resolve-app-version
+          release_tag: ${{ inputs.release_tag }}
+          default_tag: ${{ steps.image-ref.outputs.image_tag }}
 
       - name: Build container image
         id: build
@@ -343,19 +341,21 @@ jobs:
       - name: Smoke test built container
         if: inputs.run_container_smoke_test
         id: container-smoke-test
-        env:
-          IMAGE_UNDER_TEST: ${{ steps.image-ref.outputs.image_ref }}
-          CONTAINER_SMOKE_TEST_COMMAND: ${{ inputs.container_smoke_test_command }}
-          PUSH_IMAGE: ${{ inputs.push_image }}
-        run: bash .workflow-source/.github/scripts/build/smoke-test-container.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: smoke-test-container
+          image_under_test: ${{ steps.image-ref.outputs.image_ref }}
+          container_smoke_test_command: ${{ inputs.container_smoke_test_command }}
+          push_image: ${{ inputs.push_image }}
 
       - name: Capture immutable image reference
         if: inputs.push_image
         id: immutable-image
-        env:
-          IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: bash .workflow-source/.github/scripts/build/capture-immutable-image.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: capture-immutable-image
+          image_repository: ${{ steps.image-repository.outputs.image_repository }}
+          image_digest: ${{ steps.build.outputs.digest }}
 
       - name: Install Cosign
         if: inputs.push_image && inputs.release_tag != '' && inputs.sign_release
@@ -370,17 +370,18 @@ jobs:
       - name: Summarise results
         if: always()
         id: build-summary
-        env:
-          HADOLINT_OUTCOME: ${{ steps.hadolint.outcome || 'skipped' }}
-          UNIT_OUTCOME: ${{ steps.unit-tests.outcome || 'skipped' }}
-          INT_OUTCOME: ${{ steps.integration-tests.outcome || 'skipped' }}
-          CONTAINER_SMOKE_OUTCOME: ${{ steps.container-smoke-test.outcome || 'skipped' }}
-          PUSH_IMAGE: ${{ inputs.push_image }}
-          IMAGE_REF: ${{ steps.image-ref.outputs.image_ref }}
-          IMMUTABLE_IMAGE: ${{ steps.immutable-image.outputs.value || '' }}
-          BUILD_OUTCOME: ${{ steps.build.outcome || 'skipped' }}
-          SUMMARY_FILE: ci-summary.md
-        run: bash .workflow-source/.github/scripts/build/build-summary.sh
+        uses: ukhsa-collaboration/devops-application-cicd/.github/actions/build-helper@main
+        with:
+          operation: build-summary
+          hadolint_outcome: ${{ steps.hadolint.outcome || 'skipped' }}
+          unit_outcome: ${{ steps.unit-tests.outcome || 'skipped' }}
+          int_outcome: ${{ steps.integration-tests.outcome || 'skipped' }}
+          container_smoke_outcome: ${{ steps.container-smoke-test.outcome || 'skipped' }}
+          push_image: ${{ inputs.push_image }}
+          image_ref: ${{ steps.image-ref.outputs.image_ref }}
+          immutable_image: ${{ steps.immutable-image.outputs.value || '' }}
+          build_outcome: ${{ steps.build.outcome || 'skipped' }}
+          summary_file: ci-summary.md
 
       - name: Share summary in pull requests
         if: always() && github.event_name == 'pull_request' && env.LOCAL_ACT != 'true'
