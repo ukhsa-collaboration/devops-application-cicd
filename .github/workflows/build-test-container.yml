@@ -189,7 +189,7 @@ jobs:
           echo "value=${role_to_assume}" >> "$GITHUB_OUTPUT"
 
       - name: Validate publish configuration
-        if: inputs.push_image || inputs.sign_release
+        if: inputs.push_image
         env:
           IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
           REGISTRY_HOST: ${{ steps.image-repository.outputs.registry_host }}
@@ -199,10 +199,10 @@ jobs:
             || { echo "Image repository could not be determined" >&2; exit 1; }
 
           test -n "$AWS_REGISTRY_ROLE_TO_ASSUME" \
-            || { echo "Provide aws_registry_role_to_assume, or registry_account_id with aws_registry_role_name, or secret AWS_REGISTRY_ROLE when pushing or signing" >&2; exit 1; }
+            || { echo "Provide aws_registry_role_to_assume, or registry_account_id with aws_registry_role_name, or secret AWS_REGISTRY_ROLE when pushing" >&2; exit 1; }
 
           test -n "$REGISTRY_HOST" \
-            || { echo "A remote registry must be configured when push_image or sign_release is enabled" >&2; exit 1; }
+            || { echo "A remote registry must be configured when push_image is enabled" >&2; exit 1; }
 
       - name: Lint Dockerfile with Hadolint
         if: inputs.lint_dockerfile
@@ -386,7 +386,7 @@ jobs:
           retention-days: 7
 
       - name: Configure AWS credentials
-        if: inputs.push_image || inputs.sign_release
+        if: inputs.push_image
         uses: aws-actions/configure-aws-credentials@5fd3084fc36e372ff1fff382a39b10d03659f355
         with:
           role-to-assume: ${{ steps.registry-role.outputs.value }}
