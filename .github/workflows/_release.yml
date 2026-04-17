@@ -1,0 +1,28 @@
+name: "Create new release"
+on:
+  pull_request:
+    types:
+      - closed
+    branches:
+      - main
+    paths:
+      - ".github/workflows/*"
+      - "!.github/workflows/_*.yml"
+
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: '0'
+
+      - uses: ukhsa-collaboration/devops-github-actions/.github/actions/github-bump-tag@v0.9.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          DEFAULT_BUMP: patch

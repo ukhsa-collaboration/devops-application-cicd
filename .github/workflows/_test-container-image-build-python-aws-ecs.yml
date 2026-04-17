@@ -1,0 +1,57 @@
+name: "Test Container Image Build Workflow - Python"
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/_test-container-image-build-python-aws-ecs.yml
+      - .github/workflows/container-image-build-python-aws-ecs.yml
+      - .github/workflows/build-test-container.yml
+      - .github/workflows/deploy-aws-ecs.yml
+      - .github/scripts/build/**
+      - .github/scripts/deploy/**
+      - docs/container-image-build-python-aws-ecs.md
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  regression:
+    name: Execute reusable workflow
+    uses: ./.github/workflows/container-image-build-python-aws-ecs.yml
+    with:
+      app_name: sample-app
+      service_identifier: reusable
+      registry_hostname: ghcr.io/example
+      docker_context: fixtures/container_image_app
+      dockerfile: fixtures/container_image_app/Dockerfile
+      build_args: |
+        FIXTURE_MESSAGE_SUFFIX=runtime-check
+      run_unit_tests: true
+      unit_test_command: cd fixtures/container_image_app && pytest -q
+      lint_dockerfile: true
+      lint_python: true
+      run_container_smoke_test: true
+      container_smoke_test_command: docker run --rm "$IMAGE_UNDER_TEST" | tee /tmp/container-output.txt && grep -F "runtime-check" /tmp/container-output.txt
+      push_image: false
+      deploy_environments: >-
+        [
+          {
+            "name": "dev",
+            "base_url": "https://dev.example.test",
+            "smoke_test_url": "https://dev.example.test/healthcheck"
+          },
+          {
+            "name": "uat",
+            "base_url": "https://uat.example.test",
+            "smoke_test_url": "https://uat.example.test/healthcheck"
+          },
+          {
+            "name": "prd",
+            "base_url": "https://prd.example.test",
+            "smoke_test_url": "https://prd.example.test/healthcheck"
+          }
+        ]
