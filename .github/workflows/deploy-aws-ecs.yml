@@ -56,15 +56,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.compute.outputs.matrix }}
-    env:
-      RAW_ENVIRONMENTS: ${{ inputs.deploy_environments }}
-      DEFAULT_DEPLOY_ROLE_NAME: ${{ inputs.aws_deploy_role_name }}
     steps:
-      - name: Checkout repository
+      - name: Checkout workflow source
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          repository: ukhsa-collaboration/devops-application-cicd
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-source
 
       - id: compute
-        run: python .github/scripts/deploy/prepare-deploy.py
+        env:
+          RAW_ENVIRONMENTS: ${{ inputs.deploy_environments }}
+          DEFAULT_DEPLOY_ROLE_NAME: ${{ inputs.aws_deploy_role_name }}
+        run: python .workflow-source/.github/scripts/deploy/prepare-deploy.py
 
   deploy:
     name: Deploy ${{ matrix.environment.name }}
@@ -86,16 +90,23 @@ jobs:
       actions: read
       pull-requests: none
     steps:
-      - name: Checkout repository
+      - name: Checkout caller repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
         with:
           ref: ${{ inputs.deployment_checkout_ref != '' && inputs.deployment_checkout_ref || github.sha }}
+
+      - name: Checkout workflow source
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          repository: ukhsa-collaboration/devops-application-cicd
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-source
 
       - name: Validate deployment configuration
         env:
           ROLE_TO_ASSUME: ${{ matrix.environment.aws_role_to_assume || secrets.AWS_DEPLOY_ROLE }}
           IMAGE_URI: ${{ inputs.immutable_image }}
-        run: bash .github/scripts/deploy/validate-deploy-config.sh
+        run: bash .workflow-source/.github/scripts/deploy/validate-deploy-config.sh
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@5fd3084fc36e372ff1fff382a39b10d03659f355
@@ -109,7 +120,7 @@ jobs:
         env:
           IMAGE_URI: ${{ inputs.immutable_image }}
           PARAMETER_NAME: ${{ matrix.environment.ssm_parameter_name }}
-        run: bash .github/scripts/deploy/update-ssm-parameter.sh
+        run: bash .workflow-source/.github/scripts/deploy/update-ssm-parameter.sh
 
       - name: Download ECS task definition
         if: matrix.environment.task_definition != ''
@@ -160,7 +171,7 @@ jobs:
         if: matrix.environment.smoke_test_url != ''
         env:
           URL: ${{ matrix.environment.smoke_test_url }}
-        run: bash .github/scripts/deploy/smoke-test-service.sh
+        run: bash .workflow-source/.github/scripts/deploy/smoke-test-service.sh
 
       - name: Append deployment summary
         if: always()
@@ -168,4 +179,4 @@ jobs:
           DEPLOY_ENVIRONMENT: ${{ matrix.environment.name }}
           DEPLOY_IMAGE: ${{ inputs.immutable_image }}
           SMOKE_TEST_URL: ${{ matrix.environment.smoke_test_url || '' }}
-        run: bash .github/scripts/deploy/deploy-summary.sh
+        run: bash .workflow-source/.github/scripts/deploy/deploy-summary.sh

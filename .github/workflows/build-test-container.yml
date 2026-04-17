@@ -139,15 +139,22 @@ jobs:
       image_uri: ${{ steps.image-ref.outputs.image_ref }}
       immutable_image: ${{ steps.immutable-image.outputs.value }}
     steps:
-      - name: Checkout repository
+      - name: Checkout caller repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+
+      - name: Checkout workflow source
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          repository: ukhsa-collaboration/devops-application-cicd
+          ref: ${{ github.workflow_sha }}
+          path: .workflow-source
 
       - name: Resolve image repository
         id: image-repository
         env:
           REGISTRY_HOSTNAME: ${{ inputs.registry_hostname }}
           REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
-        run: bash .github/scripts/build/resolve-image-repository.sh
+        run: bash .workflow-source/.github/scripts/build/resolve-image-repository.sh
 
       - name: Resolve registry role
         id: registry-role
@@ -156,7 +163,7 @@ jobs:
           REGISTRY_ROLE_NAME: ${{ inputs.aws_registry_role_name }}
           REGISTRY_ROLE_ARN: ${{ inputs.aws_registry_role_to_assume }}
           REGISTRY_ROLE_SECRET: ${{ secrets.AWS_REGISTRY_ROLE }}
-        run: bash .github/scripts/build/resolve-registry-role.sh
+        run: bash .workflow-source/.github/scripts/build/resolve-registry-role.sh
 
       - name: Validate publish configuration
         if: inputs.push_image || inputs.sign_release
@@ -164,14 +171,14 @@ jobs:
           IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
           REGISTRY_HOST: ${{ steps.image-repository.outputs.registry_host }}
           AWS_REGISTRY_ROLE_TO_ASSUME: ${{ steps.registry-role.outputs.value }}
-        run: bash .github/scripts/build/validate-publish-config.sh
+        run: bash .workflow-source/.github/scripts/build/validate-publish-config.sh
 
       - name: Lint Dockerfile with Hadolint
         if: inputs.lint_dockerfile
         id: hadolint
         env:
           DOCKERFILE: ${{ inputs.dockerfile }}
-        run: bash .github/scripts/build/lint-dockerfile.sh
+        run: bash .workflow-source/.github/scripts/build/lint-dockerfile.sh
 
       - name: Set up Python
         if: inputs.lint_python || inputs.run_unit_tests || inputs.run_integration_tests
@@ -202,7 +209,7 @@ jobs:
           PIP_EXTRAS: ${{ inputs.pip_install_extras }}
           DOCKER_CONTEXT: ${{ inputs.docker_context }}
           DEPENDENCY_MANIFEST_PATH: .github/.cache/python-deps-manifest.txt
-        run: bash .github/scripts/build/generate-dependency-cache-manifest.sh
+        run: bash .workflow-source/.github/scripts/build/generate-dependency-cache-manifest.sh
 
       - name: Configure Python dependency caching
         if: inputs.run_unit_tests || inputs.run_integration_tests
@@ -221,7 +228,7 @@ jobs:
         env:
           PIP_EXTRAS: ${{ inputs.pip_install_extras }}
           DOCKER_CONTEXT: ${{ inputs.docker_context }}
-        run: bash .github/scripts/build/install-dependencies.sh
+        run: bash .workflow-source/.github/scripts/build/install-dependencies.sh
 
       - name: Run unit tests
         if: inputs.run_unit_tests
@@ -292,20 +299,20 @@ jobs:
         env:
           IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
           RELEASE_TAG: ${{ inputs.release_tag }}
-        run: bash .github/scripts/build/generate-docker-metadata.sh
+        run: bash .workflow-source/.github/scripts/build/generate-docker-metadata.sh
 
       - name: Capture image reference
         id: image-ref
         env:
           META_TAGS: ${{ steps.meta.outputs.tags != '' && steps.meta.outputs.tags || steps.meta-act.outputs.tags }}
-        run: bash .github/scripts/build/capture-image-ref.sh
+        run: bash .workflow-source/.github/scripts/build/capture-image-ref.sh
 
       - name: Determine application version
         id: image-version
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           DEFAULT_TAG: ${{ steps.image-ref.outputs.image_tag }}
-        run: bash .github/scripts/build/resolve-app-version.sh
+        run: bash .workflow-source/.github/scripts/build/resolve-app-version.sh
 
       - name: Build container image
         id: build
@@ -331,7 +338,7 @@ jobs:
           IMAGE_UNDER_TEST: ${{ steps.image-ref.outputs.image_ref }}
           CONTAINER_SMOKE_TEST_COMMAND: ${{ inputs.container_smoke_test_command }}
           PUSH_IMAGE: ${{ inputs.push_image }}
-        run: bash .github/scripts/build/smoke-test-container.sh
+        run: bash .workflow-source/.github/scripts/build/smoke-test-container.sh
 
       - name: Capture immutable image reference
         if: inputs.push_image
@@ -339,7 +346,7 @@ jobs:
         env:
           IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: bash .github/scripts/build/capture-immutable-image.sh
+        run: bash .workflow-source/.github/scripts/build/capture-immutable-image.sh
 
       - name: Install Cosign
         if: inputs.push_image && inputs.release_tag != '' && inputs.sign_release
@@ -364,12 +371,47 @@ jobs:
           IMMUTABLE_IMAGE: ${{ steps.immutable-image.outputs.value || '' }}
           BUILD_OUTCOME: ${{ steps.build.outcome || 'skipped' }}
           SUMMARY_FILE: ci-summary.md
-        run: bash .github/scripts/build/build-summary.sh
+        run: bash .workflow-source/.github/scripts/build/build-summary.sh
 
       - name: Share summary in pull requests
         if: always() && github.event_name == 'pull_request' && env.LOCAL_ACT != 'true'
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         with:
           script: |
-            const postBuildSummary = require('./.github/scripts/build/pr-summary-comment.js');
-            await postBuildSummary({ github, context, core });
+            const fs = require('fs');
+            const summaryPath = 'ci-summary.md';
+            if (!fs.existsSync(summaryPath)) {
+              core.info('Summary file not found; skipping comment update.');
+              return;
+            }
+            const issueNumber = context.payload?.pull_request?.number;
+            if (!issueNumber) {
+              core.info('No pull request number available; skipping comment update.');
+              return;
+            }
+            const body = fs.readFileSync(summaryPath, 'utf8');
+            const marker = '<!-- container-image-build summary -->';
+            const finalBody = `${marker}\n${body}`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              issue_number: issueNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const existing = comments.find(
+              (comment) => comment.user.type === 'Bot' && comment.body.includes(marker)
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: finalBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: finalBody,
+              });
+            }
