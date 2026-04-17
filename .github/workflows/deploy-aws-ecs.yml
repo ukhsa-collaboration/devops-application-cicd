@@ -57,11 +57,20 @@ jobs:
     outputs:
       matrix: ${{ steps.compute.outputs.matrix }}
     steps:
+      - name: Resolve workflow source ref
+        id: workflow-source-ref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          ref="${WORKFLOW_REF##*@}"
+          test -n "$ref" || { echo "Unable to resolve workflow source ref from github.workflow_ref=$WORKFLOW_REF" >&2; exit 1; }
+          echo "value=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Checkout workflow source
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
         with:
           repository: ukhsa-collaboration/devops-application-cicd
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ steps.workflow-source-ref.outputs.value }}
           path: .workflow-source
 
       - id: compute
@@ -95,11 +104,20 @@ jobs:
         with:
           ref: ${{ inputs.deployment_checkout_ref != '' && inputs.deployment_checkout_ref || github.sha }}
 
+      - name: Resolve workflow source ref
+        id: workflow-source-ref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          ref="${WORKFLOW_REF##*@}"
+          test -n "$ref" || { echo "Unable to resolve workflow source ref from github.workflow_ref=$WORKFLOW_REF" >&2; exit 1; }
+          echo "value=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Checkout workflow source
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
         with:
           repository: ukhsa-collaboration/devops-application-cicd
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ steps.workflow-source-ref.outputs.value }}
           path: .workflow-source
 
       - name: Validate deployment configuration
