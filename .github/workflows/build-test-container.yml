@@ -392,6 +392,7 @@ jobs:
           role-to-assume: ${{ steps.registry-role.outputs.value }}
           role-session-name: container-build-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: false
 
       - name: Login to Amazon ECR
         if: inputs.push_image

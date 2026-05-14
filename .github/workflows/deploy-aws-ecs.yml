@@ -157,6 +157,7 @@ jobs:
           role-to-assume: ${{ matrix.environment.aws_role_to_assume || secrets.AWS_DEPLOY_ROLE }}
           role-session-name: deploy-${{ matrix.environment.name }}-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: false
 
       - name: Update Parameter Store image reference
         if: matrix.environment.ssm_parameter_name != ''
