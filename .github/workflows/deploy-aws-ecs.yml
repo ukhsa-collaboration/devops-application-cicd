@@ -66,6 +66,12 @@ jobs:
           import json
           import os
 
+          def shorten_region_for_resource_name(region):
+              parts = region.split("-")
+              if len(parts) >= 3 and parts[-1].isdigit():
+                  return parts[0] + "".join(part[0] for part in parts[1:-1] if part) + parts[-1]
+              return region
+
           raw = (os.getenv("RAW_ENVIRONMENTS") or "").strip()
 
           if not raw:
@@ -82,6 +88,7 @@ jobs:
               service_identifier = os.getenv("SERVICE_IDENTIFIER") or ""
               app = os.getenv("APP_NAME") or ""
               region = os.getenv("AWS_REGION") or ""
+              resource_region = shorten_region_for_resource_name(region)
               default_deploy_role_name = os.getenv("DEFAULT_DEPLOY_ROLE_NAME") or ""
               matrix = []
 
@@ -102,9 +109,9 @@ jobs:
                   aws_deploy_role_name = obj.get("aws_deploy_role_name") or default_deploy_role_name
 
                   obj.setdefault("container_name", "app")
-                  obj.setdefault("task_definition", f"aw-{service_identifier}-{region}-{env_lower}-ecssvc-{app}")
-                  obj.setdefault("ecs_service", f"aw-{service_identifier}-{region}-{env_lower}-ecssvc-{app}")
-                  obj.setdefault("ecs_cluster", f"aw-{service_identifier}-{region}-{env_lower}-ecscluster")
+                  obj.setdefault("task_definition", f"aw-{service_identifier}-{resource_region}-{env_lower}-ecssvc-{app}")
+                  obj.setdefault("ecs_service", f"aw-{service_identifier}-{resource_region}-{env_lower}-ecssvc-{app}")
+                  obj.setdefault("ecs_cluster", f"aw-{service_identifier}-{resource_region}-{env_lower}-ecscluster")
 
                   if not obj.get("aws_role_to_assume") and aws_account_id and aws_deploy_role_name:
                       obj["aws_role_to_assume"] = f"arn:aws:iam::{aws_account_id}:role/{aws_deploy_role_name}"
