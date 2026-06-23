@@ -112,6 +112,7 @@ jobs:
                   obj.setdefault("task_definition", f"aw-{service_identifier}-{resource_region}-{env_lower}-ecssvc-{app}")
                   obj.setdefault("ecs_service", f"aw-{service_identifier}-{resource_region}-{env_lower}-ecssvc-{app}")
                   obj.setdefault("ecs_cluster", f"aw-{service_identifier}-{resource_region}-{env_lower}-ecscluster")
+                  obj.setdefault("ssm_parameter_name", f"/{service_identifier}/{app}/image_tag")
 
                   if not obj.get("aws_role_to_assume") and aws_account_id and aws_deploy_role_name:
                       obj["aws_role_to_assume"] = f"arn:aws:iam::{aws_account_id}:role/{aws_deploy_role_name}"
