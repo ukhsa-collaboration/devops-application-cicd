@@ -35,6 +35,11 @@ on:
         required: false
         default: ""
         type: string
+      verify_image_signature:
+        description: Verify Cosign keyless signature on the image before deployment. Requires the image to have been signed during build.
+        required: false
+        default: false
+        type: boolean
     secrets:
       AWS_DEPLOY_ROLE:
         required: false
@@ -168,9 +173,11 @@ jobs:
             || { echo "Deployment role is required via aws_role_to_assume or secret AWS_DEPLOY_ROLE" >&2; exit 1; }
 
       - name: Install Cosign
+        if: inputs.verify_image_signature
         uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159
 
       - name: Verify immutable image signature
+        if: inputs.verify_image_signature
         env:
           IMAGE_URI: ${{ inputs.immutable_image }}
           COSIGN_EXPERIMENTAL: "false"
@@ -214,7 +221,7 @@ jobs:
             --query 'services[0].taskDefinition' \
             --output text)
 
-          test -n "$current_task_definition" \
+          test -n "$current_task_definition" && [ "$current_task_definition" != "None" ] \
             || { echo "Unable to determine current task definition for rollback" >&2; exit 1; }
 
           echo "value=$current_task_definition" >> "$GITHUB_OUTPUT"
@@ -251,21 +258,6 @@ jobs:
           cluster: ${{ matrix.environment.ecs_cluster }}
           wait-for-service-stability: true
 
-      - name: Update Parameter Store image reference
-        if: matrix.environment.ssm_parameter_name != ''
-        env:
-          IMAGE_URI: ${{ inputs.immutable_image }}
-          PARAMETER_NAME: ${{ matrix.environment.ssm_parameter_name }}
-        run: |
-          test -n "$PARAMETER_NAME" \
-            || { echo "Parameter name missing" >&2; exit 1; }
-
-          aws ssm put-parameter \
-            --name "$PARAMETER_NAME" \
-            --type "String" \
-            --value "$IMAGE_URI" \
-            --overwrite
-
       - name: Set up Python for deployment tasks
         if: matrix.environment.integration_test_command != ''
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -284,7 +276,7 @@ jobs:
         if: matrix.environment.integration_test_command != ''
         env:
           DEPLOY_ENVIRONMENT: ${{ matrix.environment.name }}
-          BASE_URL: ${{ matrix.environment.base_url }}  
+          BASE_URL: ${{ matrix.environment.base_url }}
           INTEGRATION_TEST_COMMAND: ${{ matrix.environment.integration_test_command }}
         run: bash -eo pipefail -c "$INTEGRATION_TEST_COMMAND"
 
@@ -298,7 +290,7 @@ jobs:
           delay_seconds=2
 
           for attempt in $(seq 1 "$max_attempts"); do
-            code=$(curl --fail --max-time 10 -A "$USER_AGENT" -L -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
+            code=$(curl --max-time 10 -A "$USER_AGENT" -L -s -o /dev/null -w "%{http_code}" "$URL")
 
             if [ "$code" -eq 200 ]; then
               echo "Smoke test succeeded for $URL"
@@ -316,6 +308,21 @@ jobs:
 
           echo "Smoke test failed for $URL after ${max_attempts} attempts" >&2
           exit 1
+
+      - name: Update Parameter Store image reference
+        if: success() && matrix.environment.ssm_parameter_name != ''
+        env:
+          IMAGE_URI: ${{ inputs.immutable_image }}
+          PARAMETER_NAME: ${{ matrix.environment.ssm_parameter_name }}
+        run: |
+          test -n "$PARAMETER_NAME" \
+            || { echo "Parameter name missing" >&2; exit 1; }
+
+          aws ssm put-parameter \
+            --name "$PARAMETER_NAME" \
+            --type "String" \
+            --value "$IMAGE_URI" \
+            --overwrite
 
       - name: Roll back ECS service to previous task definition
         if: failure() && matrix.environment.ecs_service != '' && matrix.environment.ecs_cluster != '' && steps.capture-current-task-def.outputs.value != ''
