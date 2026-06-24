@@ -75,6 +75,7 @@ Provide `deploy_environments` as a JSON array. Each object supports:
     "ecs_service": "my-ecs-service",
     "base_url": "https://dev.example.com",
     "integration_test_command": "pytest tests/integration --base-url=$BASE_URL",
+    "predeploy_script": "scripts/pre_deploy.sh",
     "deploy_script": "scripts/post_deploy.sh",
     "smoke_test_url": "https://dev.example.com/health"
   }
@@ -91,7 +92,9 @@ Fields are optional; the workflow supplies defaults for ECS resource naming:
 | `ecs_service` | `aw-{service_identifier}-{region}-{environment}-ecssvc-{app}` | Derived from workflow inputs; override to use a different service. |
 | `ecs_cluster` | `aw-{service_identifier}-{region}-{environment}-ecscluster` | Derived from workflow inputs; override to use a different cluster. |
 
-All other fields (`ssm_parameter_name`, `base_url`, `integration_test_command`, `deploy_script`, `smoke_test_url`) are optional and not provided by default.
+All other fields (`base_url`, `integration_test_command`, `predeploy_script`, `deploy_script`, `smoke_test_url`) are optional and not provided by default.
+
+`ssm_parameter_name` defaults to `/{service_identifier}/{app_name}/image_tag` when omitted. Set `ssm_parameter_name` explicitly in each environment object to override this default, or set it to an empty string (`""`) to skip writing to Parameter Store for that environment.
 
 The deploy job only runs when `deploy_environments` is non-empty and both `push_image` and `release_tag` are set.
 
