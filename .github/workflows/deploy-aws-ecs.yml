@@ -38,7 +38,7 @@ on:
       verify_image_signature:
         description: Verify Cosign keyless signature on the image before deployment. Requires the image to have been signed during build.
         required: false
-        default: false
+        default: true
         type: boolean
     secrets:
       AWS_DEPLOY_ROLE:
@@ -172,21 +172,6 @@ jobs:
           test -n "$ROLE_TO_ASSUME" \
             || { echo "Deployment role is required via aws_role_to_assume or secret AWS_DEPLOY_ROLE" >&2; exit 1; }
 
-      - name: Install Cosign
-        if: inputs.verify_image_signature
-        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159
-
-      - name: Verify immutable image signature
-        if: inputs.verify_image_signature
-        env:
-          IMAGE_URI: ${{ inputs.immutable_image }}
-          COSIGN_EXPERIMENTAL: "false"
-        run: |
-          cosign verify \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/.+" \
-            "$IMAGE_URI"
-
       - name: Build safe role session name
         id: role-session
         env:
@@ -208,6 +193,21 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: false
 
+      - name: Install Cosign
+        if: inputs.verify_image_signature
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159
+
+      - name: Verify immutable image signature
+        if: inputs.verify_image_signature
+        env:
+          IMAGE_URI: ${{ inputs.immutable_image }}
+          COSIGN_EXPERIMENTAL: "false"
+        run: |
+          cosign verify \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/.+" \
+            "$IMAGE_URI"
+
       - name: Capture current ECS task definition
         if: matrix.environment.ecs_service != '' && matrix.environment.ecs_cluster != ''
         id: capture-current-task-def
@@ -221,8 +221,10 @@ jobs:
             --query 'services[0].taskDefinition' \
             --output text)
 
-          test -n "$current_task_definition" && [ "$current_task_definition" != "None" ] \
-            || { echo "Unable to determine current task definition for rollback" >&2; exit 1; }
+          if [ -z "$current_task_definition" ] || [ "$current_task_definition" = "None" ]; then
+            echo "Unable to determine current task definition for rollback" >&2
+            exit 1
+          fi
 
           echo "value=$current_task_definition" >> "$GITHUB_OUTPUT"
 
@@ -290,7 +292,9 @@ jobs:
           delay_seconds=2
 
           for attempt in $(seq 1 "$max_attempts"); do
-            code=$(curl --max-time 10 -A "$USER_AGENT" -L -s -o /dev/null -w "%{http_code}" "$URL")
+            if ! code=$(curl --max-time 10 -A "$USER_AGENT" -L -s -o /dev/null -w "%{http_code}" "$URL"); then
+              code="000"
+            fi
 
             if [ "$code" -eq 200 ]; then
               echo "Smoke test succeeded for $URL"
@@ -364,6 +368,8 @@ jobs:
             --output text)
 
           if [ -n "$stopped_tasks" ] && [ "$stopped_tasks" != "None" ]; then
+            # Intentionally split the AWS CLI text output into task ARN arguments.
+            # shellcheck disable=SC2086
             aws ecs describe-tasks \
               --cluster "$ECS_CLUSTER" \
               --tasks $stopped_tasks \
