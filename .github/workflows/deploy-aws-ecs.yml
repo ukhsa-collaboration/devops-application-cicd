@@ -35,6 +35,11 @@ on:
         required: false
         default: ""
         type: string
+      verify_image_signature:
+        description: Verify Cosign keyless signature on the image before deployment. Requires the image to have been signed during build.
+        required: false
+        default: true
+        type: boolean
     secrets:
       AWS_DEPLOY_ROLE:
         required: false
@@ -156,31 +161,80 @@ jobs:
           test -n "$IMAGE_URI" \
             || { echo "immutable_image is required" >&2; exit 1; }
 
+          case "$IMAGE_URI" in
+            *@sha256:*) ;;
+            *)
+              echo "immutable_image must be pinned by digest (image@sha256:...)" >&2
+              exit 1
+              ;;
+          esac
+
           test -n "$ROLE_TO_ASSUME" \
             || { echo "Deployment role is required via aws_role_to_assume or secret AWS_DEPLOY_ROLE" >&2; exit 1; }
+
+      - name: Build safe role session name
+        id: role-session
+        env:
+          ENVIRONMENT_NAME: ${{ matrix.environment.name }}
+        run: |
+          safe_name=$(printf '%s' "$ENVIRONMENT_NAME" | tr -cs 'A-Za-z0-9+=,.@-' '-')
+          safe_name=$(printf '%s' "$safe_name" | sed -E 's/^-+//; s/-+$//')
+          if [ -z "$safe_name" ]; then
+            safe_name="env"
+          fi
+          safe_name=$(printf '%s' "$safe_name" | cut -c1-40)
+          echo "value=deploy-${safe_name}-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@5fd3084fc36e372ff1fff382a39b10d03659f355
         with:
           role-to-assume: ${{ matrix.environment.aws_role_to_assume || secrets.AWS_DEPLOY_ROLE }}
-          role-session-name: deploy-${{ matrix.environment.name }}-${{ github.run_id }}
+          role-session-name: ${{ steps.role-session.outputs.value }}
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: false
 
-      - name: Update Parameter Store image reference
-        if: matrix.environment.ssm_parameter_name != ''
+      - name: Install Cosign
+        if: inputs.verify_image_signature
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159
+
+      - name: Verify immutable image signature
+        if: inputs.verify_image_signature
         env:
           IMAGE_URI: ${{ inputs.immutable_image }}
-          PARAMETER_NAME: ${{ matrix.environment.ssm_parameter_name }}
+          COSIGN_EXPERIMENTAL: "false"
         run: |
-          test -n "$PARAMETER_NAME" \
-            || { echo "Parameter name missing" >&2; exit 1; }
+          cosign verify \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/.+" \
+            "$IMAGE_URI"
 
-          aws ssm put-parameter \
-            --name "$PARAMETER_NAME" \
-            --type "String" \
-            --value "$IMAGE_URI" \
-            --overwrite
+      - name: Capture current ECS task definition
+        if: matrix.environment.ecs_service != '' && matrix.environment.ecs_cluster != ''
+        id: capture-current-task-def
+        env:
+          ECS_SERVICE: ${{ matrix.environment.ecs_service }}
+          ECS_CLUSTER: ${{ matrix.environment.ecs_cluster }}
+        run: |
+          current_task_definition=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          if [ -z "$current_task_definition" ] || [ "$current_task_definition" = "None" ]; then
+            echo "Unable to determine current task definition for rollback" >&2
+            exit 1
+          fi
+
+          echo "value=$current_task_definition" >> "$GITHUB_OUTPUT"
+
+      - name: Run pre-deploy script
+        if: matrix.environment.predeploy_script != ''
+        env:
+          DEPLOY_ENVIRONMENT: ${{ matrix.environment.name }}
+          DEPLOY_IMAGE: ${{ inputs.immutable_image }}
+          DEPLOY_SCRIPT: ${{ matrix.environment.predeploy_script }}
+        run: bash -eo pipefail "$DEPLOY_SCRIPT"
 
       - name: Download ECS task definition
         if: matrix.environment.task_definition != ''
@@ -217,7 +271,8 @@ jobs:
         env:
           DEPLOY_ENVIRONMENT: ${{ matrix.environment.name }}
           DEPLOY_IMAGE: ${{ inputs.immutable_image }}
-        run: bash -eo pipefail ${{ matrix.environment.deploy_script }}
+          DEPLOY_SCRIPT: ${{ matrix.environment.deploy_script }}
+        run: bash -eo pipefail "$DEPLOY_SCRIPT"
 
       - name: Run environment specific integration tests
         if: matrix.environment.integration_test_command != ''
@@ -233,14 +288,101 @@ jobs:
           URL: ${{ matrix.environment.smoke_test_url }}
         run: |
           USER_AGENT="Mozilla/5.0 (compatible; SmokeTest/1.0)"
-          code=$(curl -A "$USER_AGENT" -L -s -o /dev/null -w "%{http_code}" "$URL")
+          max_attempts=5
+          delay_seconds=2
 
-          if [ "$code" -ne 200 ]; then
-            echo "Smoke test failed with status $code for $URL" >&2
-            exit 1
+          for attempt in $(seq 1 "$max_attempts"); do
+            if ! code=$(curl --max-time 10 -A "$USER_AGENT" -L -s -o /dev/null -w "%{http_code}" "$URL"); then
+              code="000"
+            fi
+
+            if [ "$code" -eq 200 ]; then
+              echo "Smoke test succeeded for $URL"
+              exit 0
+            fi
+
+            if [ "$attempt" -eq "$max_attempts" ]; then
+              break
+            fi
+
+            echo "Smoke test attempt $attempt failed with status $code for $URL. Retrying in ${delay_seconds}s" >&2
+            sleep "$delay_seconds"
+            delay_seconds=$((delay_seconds * 2))
+          done
+
+          echo "Smoke test failed for $URL after ${max_attempts} attempts" >&2
+          exit 1
+
+      - name: Update Parameter Store image reference
+        if: success() && matrix.environment.ssm_parameter_name != ''
+        env:
+          IMAGE_URI: ${{ inputs.immutable_image }}
+          PARAMETER_NAME: ${{ matrix.environment.ssm_parameter_name }}
+        run: |
+          test -n "$PARAMETER_NAME" \
+            || { echo "Parameter name missing" >&2; exit 1; }
+
+          aws ssm put-parameter \
+            --name "$PARAMETER_NAME" \
+            --type "String" \
+            --value "$IMAGE_URI" \
+            --overwrite
+
+      - name: Roll back ECS service to previous task definition
+        if: failure() && matrix.environment.ecs_service != '' && matrix.environment.ecs_cluster != '' && steps.capture-current-task-def.outputs.value != ''
+        env:
+          ECS_SERVICE: ${{ matrix.environment.ecs_service }}
+          ECS_CLUSTER: ${{ matrix.environment.ecs_cluster }}
+          PREVIOUS_TASK_DEFINITION: ${{ steps.capture-current-task-def.outputs.value }}
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$PREVIOUS_TASK_DEFINITION"
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+      - name: Show ECS failure diagnostics
+        if: failure() && matrix.environment.ecs_service != '' && matrix.environment.ecs_cluster != ''
+        env:
+          ECS_SERVICE: ${{ matrix.environment.ecs_service }}
+          ECS_CLUSTER: ${{ matrix.environment.ecs_cluster }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          echo "::group::ECS service events (most recent 10)"
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].events[:10]' \
+            --output table
+          echo "::endgroup::"
+
+          echo "::group::Stopped tasks and failure reasons"
+          stopped_tasks=$(aws ecs list-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --service-name "$ECS_SERVICE" \
+            --desired-status STOPPED \
+            --query 'taskArns[:5]' \
+            --output text)
+
+          if [ -n "$stopped_tasks" ] && [ "$stopped_tasks" != "None" ]; then
+            # Intentionally split the AWS CLI text output into task ARN arguments.
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks \
+              --cluster "$ECS_CLUSTER" \
+              --tasks $stopped_tasks \
+              --query 'tasks[*].{taskArn:taskArn,stoppedReason:stoppedReason,containers:containers[*].{name:name,reason:reason,exitCode:exitCode,lastStatus:lastStatus}}' \
+              --output table
+          else
+            echo "No recently stopped tasks found."
           fi
+          echo "::endgroup::"
 
-          echo "Smoke test succeeded for $URL"
+          echo ""
+          echo "To view full container logs, open CloudWatch Logs in the AWS console:"
+          echo "  https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#logsV2:log-groups"
 
       - name: Append deployment summary
         if: always()

@@ -83,7 +83,7 @@ on:
         type: string
       sign_release:
         required: false
-        default: false
+        default: true
         type: boolean
       lint_dockerfile:
         required: false
