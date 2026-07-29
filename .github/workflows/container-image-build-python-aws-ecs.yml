@@ -146,6 +146,11 @@ on:
         required: false
         default: ""
         type: string
+      post_deploy_test_command:
+        description: Shell command executed against each deployed environment as an extensive post-deploy test suite. Receives BASE_URL, DEPLOY_ENVIRONMENT, and DEPLOY_IMAGE in the environment. Overridable per-environment in deploy_environments.
+        required: false
+        default: ""
+        type: string
     secrets:
       AWS_REGISTRY_ROLE:
         required: false
@@ -214,5 +219,6 @@ jobs:
       aws_deploy_role_name: ${{ inputs.aws_deploy_role_name }}
       deployment_checkout_ref: ${{ inputs.deployment_checkout_ref }}
       verify_image_signature: ${{ inputs.verify_image_signature }}
+      post_deploy_test_command: ${{ inputs.post_deploy_test_command }}
     secrets:
       AWS_DEPLOY_ROLE: ${{ secrets.AWS_DEPLOY_ROLE }}

@@ -40,6 +40,11 @@ on:
         required: false
         default: true
         type: boolean
+      post_deploy_test_command:
+        description: Shell command executed against each deployed environment as an extensive post-deploy test suite. Receives BASE_URL, DEPLOY_ENVIRONMENT, and DEPLOY_IMAGE in the environment. Overridable per-environment in deploy_environments.
+        required: false
+        default: ""
+        type: string
     secrets:
       AWS_DEPLOY_ROLE:
         required: false
@@ -66,6 +71,7 @@ jobs:
         env:
           RAW_ENVIRONMENTS: ${{ inputs.deploy_environments }}
           DEFAULT_DEPLOY_ROLE_NAME: ${{ inputs.aws_deploy_role_name }}
+          DEFAULT_POST_DEPLOY_TEST_COMMAND: ${{ inputs.post_deploy_test_command }}
         run: |
           python <<'PY'
           import json
@@ -95,6 +101,7 @@ jobs:
               region = os.getenv("AWS_REGION") or ""
               resource_region = shorten_region_for_resource_name(region)
               default_deploy_role_name = os.getenv("DEFAULT_DEPLOY_ROLE_NAME") or ""
+              default_post_deploy_test_command = os.getenv("DEFAULT_POST_DEPLOY_TEST_COMMAND") or ""
               matrix = []
 
               for item in data:
@@ -118,6 +125,7 @@ jobs:
                   obj.setdefault("ecs_service", f"aw-{service_identifier}-{resource_region}-{env_lower}-ecssvc-{app}")
                   obj.setdefault("ecs_cluster", f"aw-{service_identifier}-{resource_region}-{env_lower}-ecscluster")
                   obj.setdefault("ssm_parameter_name", f"/{service_identifier}/{app}/image_tag")
+                  obj.setdefault("post_deploy_test_command", default_post_deploy_test_command)
 
                   if not obj.get("aws_role_to_assume") and aws_account_id and aws_deploy_role_name:
                       obj["aws_role_to_assume"] = f"arn:aws:iam::{aws_account_id}:role/{aws_deploy_role_name}"
@@ -261,7 +269,7 @@ jobs:
           wait-for-service-stability: true
 
       - name: Set up Python for deployment tasks
-        if: matrix.environment.integration_test_command != ''
+        if: matrix.environment.integration_test_command != '' || matrix.environment.post_deploy_test_command != ''
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           cache: "pip"
@@ -312,6 +320,15 @@ jobs:
 
           echo "Smoke test failed for $URL after ${max_attempts} attempts" >&2
           exit 1
+
+      - name: Run post-deploy tests
+        if: matrix.environment.post_deploy_test_command != ''
+        env:
+          DEPLOY_ENVIRONMENT: ${{ matrix.environment.name }}
+          BASE_URL: ${{ matrix.environment.base_url }}
+          DEPLOY_IMAGE: ${{ inputs.immutable_image }}
+          POST_DEPLOY_TEST_COMMAND: ${{ matrix.environment.post_deploy_test_command }}
+        run: bash -eo pipefail -c "$POST_DEPLOY_TEST_COMMAND"
 
       - name: Update Parameter Store image reference
         if: success() && matrix.environment.ssm_parameter_name != ''
@@ -390,6 +407,7 @@ jobs:
           DEPLOY_ENVIRONMENT: ${{ matrix.environment.name }}
           DEPLOY_IMAGE: ${{ inputs.immutable_image }}
           SMOKE_TEST_URL: ${{ matrix.environment.smoke_test_url || '' }}
+          POST_DEPLOY_TEST_COMMAND: ${{ matrix.environment.post_deploy_test_command || '' }}
         run: |
           {
             echo "### Deployment (${DEPLOY_ENVIRONMENT})"
@@ -397,5 +415,8 @@ jobs:
             echo "Image: ${DEPLOY_IMAGE}"
             if [ -n "${SMOKE_TEST_URL}" ]; then
               echo "Smoke test: ${SMOKE_TEST_URL}"
+            fi
+            if [ -n "${POST_DEPLOY_TEST_COMMAND}" ]; then
+              echo "Post-deploy tests: configured"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
