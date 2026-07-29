@@ -81,10 +81,6 @@ on:
         required: false
         default: ""
         type: string
-      sign_release:
-        required: false
-        default: true
-        type: boolean
       lint_dockerfile:
         required: false
         default: true
@@ -505,16 +501,6 @@ jobs:
           IMAGE_REPOSITORY: ${{ steps.image-repository.outputs.image_repository }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: echo "value=${IMAGE_REPOSITORY}@${IMAGE_DIGEST}" >> "$GITHUB_OUTPUT"
-
-      - name: Install Cosign
-        if: inputs.push_image && inputs.release_tag != '' && inputs.sign_release
-        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159
-
-      - name: Sign release image digest
-        if: inputs.push_image && inputs.release_tag != '' && inputs.sign_release
-        env:
-          IMAGE: ${{ steps.immutable-image.outputs.value }}
-        run: cosign sign --yes "$IMAGE"
 
       - name: Summarise results
         if: always()

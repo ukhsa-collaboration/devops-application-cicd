@@ -101,16 +101,6 @@ on:
         required: false
         default: ""
         type: string
-      sign_release:
-        description: Sign the pushed image digest with Cosign.
-        required: false
-        default: false
-        type: boolean
-      verify_image_signature:
-        description: Verify the Cosign keyless signature on the pushed image digest before deployment.
-        required: false
-        default: true
-        type: boolean
       lint_dockerfile:
         description: Run Hadolint against the Dockerfile.
         required: false
@@ -197,7 +187,6 @@ jobs:
       container_smoke_test_command: ${{ inputs.container_smoke_test_command }}
       push_image: ${{ inputs.push_image }}
       release_tag: ${{ inputs.release_tag }}
-      sign_release: ${{ inputs.sign_release }}
       lint_dockerfile: ${{ inputs.lint_dockerfile }}
       lint_python: ${{ inputs.lint_python }}
       pip_install_extras: ${{ inputs.pip_install_extras }}

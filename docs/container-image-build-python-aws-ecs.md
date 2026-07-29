@@ -56,8 +56,6 @@ The public entrypoint is `.github/workflows/container-image-build-python-aws-ecs
 | `post_deploy_test_command` | string | `""` | Shell command executed against each deployed environment as an extensive post-deploy test suite. Receives `BASE_URL`, `DEPLOY_ENVIRONMENT`, and `DEPLOY_IMAGE` in the environment. Overridable per-environment. |
 | `registry_hostname` | string | `""` | Override registry host directly. |
 | `lint_dockerfile` / `lint_python` | boolean | `true` | Toggle linting stages. |
-| `sign_release` | boolean | `true` | Sign the pushed digest with Cosign during the release job. |
-| `verify_image_signature` | boolean | `true` | Verify the Cosign keyless signature on the pushed digest before deployment. Requires the image to be signed (e.g., set `sign_release: true`). |
 | `ecr_registry_namespace` | string | "" | The namespace of the ECR registry. Uses `service_identifier` if left empty. |
 
 > Additional inputs are documented inline in `.github/workflows/container-image-build-python-aws-ecs.yml` but are not typically changed.
