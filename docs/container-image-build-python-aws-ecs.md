@@ -11,8 +11,9 @@ The public entrypoint is `.github/workflows/container-image-build-python-aws-ecs
 - Prefers `pyproject.toml` (with pinned dependencies and optional extras) but falls back to requirements.txt and requirements-dev.txt files.
 - Runs Hadolint and Ruff format/lint checks for Python projects.
 - Supports arbitrary unit, integration, and post-build container smoke-test commands; results are summarised in the job summary and PR comments.
-- Builds once and exposes an immutable image reference for downstream deployment.
 - Deploys to Amazon ECS using the pushed image digest rather than a mutable tag.
+- Post-deployment includes lightweight smoke tests (quick health checks) and optional extensive post-deploy test suites (comprehensive validation); failures block image promotion and trigger rollback.
+- Builds once and exposes an immutable image reference for downstream deployment.
 
 ## Prerequisites
 - The calling repository must contain a Dockerfile and whatever Python/test assets your commands require.
@@ -52,9 +53,10 @@ The public entrypoint is `.github/workflows/container-image-build-python-aws-ecs
 | `release_tag` | string | `""` | Optional release tag applied to the pushed image. |
 | `deploy_environments` | string | `[]` | JSON array describing deployments. See below. |
 | `aws_deploy_role_name` | string | `""` | Default workload-account deploy role name used with per-environment `aws_account_id`. |
+| `post_deploy_test_command` | string | `""` | Shell command executed against each deployed environment as an extensive post-deploy test suite. Receives `BASE_URL`, `DEPLOY_ENVIRONMENT`, and `DEPLOY_IMAGE` in the environment. Overridable per-environment. |
 | `registry_hostname` | string | `""` | Override registry host directly. |
 | `lint_dockerfile` / `lint_python` | boolean | `true` | Toggle linting stages. |
-| `sign_release` | boolean | `false` | Sign the pushed digest with Cosign during the release job. |
+| `sign_release` | boolean | `true` | Sign the pushed digest with Cosign during the release job. |
 | `verify_image_signature` | boolean | `true` | Verify the Cosign keyless signature on the pushed digest before deployment. Requires the image to be signed (e.g., set `sign_release: true`). |
 | `ecr_registry_namespace` | string | "" | The namespace of the ECR registry. Uses `service_identifier` if left empty. |
 
@@ -76,6 +78,7 @@ Provide `deploy_environments` as a JSON array. Each object supports:
     "ecs_service": "my-ecs-service",
     "base_url": "https://dev.example.com",
     "integration_test_command": "pytest tests/integration --base-url=$BASE_URL",
+    "post_deploy_test_command": "pytest tests/postdeploy --base-url=$BASE_URL",
     "predeploy_script": "scripts/pre_deploy.sh",
     "deploy_script": "scripts/post_deploy.sh",
     "smoke_test_url": "https://dev.example.com/health"
@@ -93,7 +96,9 @@ Fields are optional; the workflow supplies defaults for ECS resource naming:
 | `ecs_service` | `aw-{service_identifier}-{region}-{environment}-ecssvc-{app}` | Derived from workflow inputs; override to use a different service. |
 | `ecs_cluster` | `aw-{service_identifier}-{region}-{environment}-ecscluster` | Derived from workflow inputs; override to use a different cluster. |
 
-All other fields (`base_url`, `integration_test_command`, `predeploy_script`, `deploy_script`, `smoke_test_url`) are optional and not provided by default.
+All other fields (`base_url`, `integration_test_command`, `post_deploy_test_command`, `predeploy_script`, `deploy_script`, `smoke_test_url`) are optional and not provided by default.
+
+`post_deploy_test_command` defaults to the top-level workflow input `post_deploy_test_command` when not specified in the environment object; override it to use a different test suite per environment, or set it to an empty string (`""`) to skip post-deploy tests for a specific environment despite a top-level default being set.
 
 `ssm_parameter_name` defaults to `/{service_identifier}/{app_name}/image_tag` when omitted. Set `ssm_parameter_name` explicitly in each environment object to override this default, or set it to an empty string (`""`) to skip writing to Parameter Store for that environment.
 
@@ -148,11 +153,13 @@ jobs:
       aws_deploy_role_name: "github-deploy"
       push_image: ${{ github.ref == 'refs/heads/main' }}
       release_tag: ${{ github.ref_name }}
+      post_deploy_test_command: pytest tests/postdeploy --base-url=$BASE_URL
       deploy_environments: >-
         [
           {
             "name": "dev",
             "aws_account_id": "210987654321",
+            "base_url": "https://dev.example.com",
             "ecs_cluster": "my-cluster",
             "ecs_service": "my-service",
             "smoke_test_url": "https://dev.example.com/health"
@@ -160,13 +167,14 @@ jobs:
           {
             "name": "prd",
             "aws_account_id": "321098765432",
+            "base_url": "https://prod.example.com",
             "ecs_cluster": "my-cluster",
             "ecs_service": "my-service",
             "smoke_test_url": "https://prod.example.com/health"
           }
         ]
 ```
-On main branch pushes, the image is pushed and automatically deployed to both dev and prod environments.
+On main branch pushes, the image is pushed and automatically deployed to both dev and prod environments. Each deployment runs lightweight smoke tests against the `smoke_test_url` (HTTP 200 check) followed by the extensive post-deploy test suite.
 
 ## Example Caller Workflow
 ```yaml
@@ -220,6 +228,7 @@ act pull_request -W .github/workflows/_test-container-image-build-python-aws-ecs
 - The deploy workflow consumes an immutable image reference (`image@sha256:...`) from the build workflow.
 - The build workflow uses a registry-specific role for central ECR access; the deploy workflow uses workload-account roles for ECS updates.
 - Per-environment deployment roles can be provided inline as a full ARN or derived from `aws_account_id` plus a role name.
+- Deployment validation runs in order: ECS service stabilizes > lightweight smoke test (optional HTTP health check) > extensive post-deploy tests (optional) > SSM parameter update. If the smoke test or post-deploy tests fail, the deployment is rolled back and the image reference is not written to Parameter Store, blocking promotion to downstream environments.
 - When `ssm_parameter_name` is provided, the workflow stores the immutable image reference rather than a mutable tag.
 - This pattern assumes your Terraform pipeline reads that SSM parameter value during infra/apply runs and uses it as the image version source of truth.
 - Reading the version from Parameter Store prevents config churn between application and infrastructure pipelines by decoupling image promotion from Terraform code changes.

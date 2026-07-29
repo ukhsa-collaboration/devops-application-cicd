@@ -37,6 +37,7 @@ jobs:
       run_container_smoke_test: true
       container_smoke_test_command: docker run --rm "$IMAGE_UNDER_TEST" | tee /tmp/container-output.txt && grep -F "runtime-check" /tmp/container-output.txt
       push_image: false
+      post_deploy_test_command: 'echo "post-deploy test: testing $DEPLOY_ENVIRONMENT with $DEPLOY_IMAGE"'
       deploy_environments: >-
         [
           {
@@ -52,6 +53,7 @@ jobs:
           {
             "name": "prd",
             "base_url": "https://prd.example.test",
-            "smoke_test_url": "https://prd.example.test/healthcheck"
+            "smoke_test_url": "https://prd.example.test/healthcheck",
+            "post_deploy_test_command": "echo 'prd-specific post-deploy test override'"
           }
         ]
