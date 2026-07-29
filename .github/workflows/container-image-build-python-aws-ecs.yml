@@ -215,6 +215,7 @@ jobs:
       aws_region: ${{ inputs.aws_region }}
       runner_labels: ${{ inputs.runner_labels }}
       immutable_image: ${{ needs.build.outputs.immutable_image }}
+      registry_account_id: ${{ inputs.registry_account_id }}
       deploy_environments: ${{ inputs.deploy_environments }}
       aws_deploy_role_name: ${{ inputs.aws_deploy_role_name }}
       deployment_checkout_ref: ${{ inputs.deployment_checkout_ref }}

@@ -21,6 +21,11 @@ on:
         description: Fully qualified immutable image reference to deploy.
         required: true
         type: string
+      registry_account_id:
+        description: AWS account id that owns the ECR registry used for image signature verification.
+        required: false
+        default: ""
+        type: string
       deploy_environments:
         description: JSON array of deployment descriptors.
         required: true
@@ -165,6 +170,8 @@ jobs:
         env:
           ROLE_TO_ASSUME: ${{ matrix.environment.aws_role_to_assume || secrets.AWS_DEPLOY_ROLE }}
           IMAGE_URI: ${{ inputs.immutable_image }}
+          VERIFY_IMAGE_SIGNATURE: ${{ inputs.verify_image_signature }}
+          REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
         run: |
           test -n "$IMAGE_URI" \
             || { echo "immutable_image is required" >&2; exit 1; }
@@ -179,6 +186,11 @@ jobs:
 
           test -n "$ROLE_TO_ASSUME" \
             || { echo "Deployment role is required via aws_role_to_assume or secret AWS_DEPLOY_ROLE" >&2; exit 1; }
+
+          if [ "$VERIFY_IMAGE_SIGNATURE" = "true" ]; then
+            test -n "$REGISTRY_ACCOUNT_ID" \
+              || { echo "registry_account_id is required when verify_image_signature is enabled" >&2; exit 1; }
+          fi
 
       - name: Build safe role session name
         id: role-session
@@ -208,6 +220,8 @@ jobs:
       - name: Login to Amazon ECR for Cosign verify
         if: inputs.verify_image_signature
         uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076
+        with:
+          registries: ${{ inputs.registry_account_id }}
 
       - name: Verify immutable image signature
         if: inputs.verify_image_signature
