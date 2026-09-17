@@ -165,7 +165,6 @@ jobs:
         env:
           ROLE_TO_ASSUME: ${{ matrix.environment.aws_role_to_assume || secrets.AWS_DEPLOY_ROLE }}
           IMAGE_URI: ${{ inputs.immutable_image }}
-          VERIFY_IMAGE_SIGNATURE: ${{ inputs.verify_image_signature }}
           REGISTRY_ACCOUNT_ID: ${{ inputs.registry_account_id }}
         run: |
           test -n "$IMAGE_URI" \
@@ -182,10 +181,6 @@ jobs:
           test -n "$ROLE_TO_ASSUME" \
             || { echo "Deployment role is required via aws_role_to_assume or secret AWS_DEPLOY_ROLE" >&2; exit 1; }
 
-          if [ "$VERIFY_IMAGE_SIGNATURE" = "true" ]; then
-            test -n "$REGISTRY_ACCOUNT_ID" \
-              || { echo "registry_account_id is required when verify_image_signature is enabled" >&2; exit 1; }
-          fi
 
       - name: Build safe role session name
         id: role-session
