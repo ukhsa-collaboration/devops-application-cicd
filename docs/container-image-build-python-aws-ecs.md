@@ -64,6 +64,35 @@ The public entrypoint is `.github/workflows/container-image-build-python-aws-ecs
 
 Docker layer caching is enabled whether or not the image is pushed. Both cache inputs accept newline-delimited values. For local `act` runs or runners without GitHub cache access, set both inputs to `""` or configure another backend. When building multiple images in one repository, use matching, distinct `scope` values in `cache_from` and `cache_to` for each image (for example, `type=gha,scope=my-app` and `type=gha,mode=max,scope=my-app`).
 
+## Private Git dependencies during tests and Docker builds
+
+The optional `BUILD_SSH_PRIVATE_KEY` secret enables SSH authentication before dependency installation and tests on the runner, and forwards the same agent into the Docker build. The runner trusts GitHub’s published Ed25519 host key. Register the public key as a read-only deploy key on the dependency repository and store the corresponding private key, without a passphrase, as an Actions secret in the calling repository.
+
+Pass the secret explicitly alongside any existing secret mappings, or use `secrets: inherit`:
+
+```yaml
+jobs:
+  container:
+    uses: ukhsa-collaboration/devops-application-cicd/.github/workflows/container-image-build-python-aws-ecs.yml@main
+    with:
+      app_name: example-app
+      service_identifier: ex
+      build_args: |
+        PRIVATE_MODULE_PIP_INSTALL_LOCATION=git+ssh://git@github.com/ukhsa-collaboration/example-private-pip-module@<dependency-commit-sha>
+    secrets:
+      BUILD_SSH_PRIVATE_KEY: ${{ secrets.BUILD_SSH_PRIVATE_KEY }}
+```
+
+The Dockerfile must install Git and an SSH client, configure trusted host keys for the Git server, and consume the agent using an SSH mount.
+
+For example:
+```dockerfile
+ARG PRIVATE_MODULE_PIP_INSTALL_LOCATION
+RUN --mount=type=ssh,required=true pip install "${PRIVATE_MODULE_PIP_INSTALL_LOCATION}"
+```
+
+Self-hosted runners must have OpenSSH tools installed for `ssh-agent` and `ssh-add` to work.
+
 ## Deployment Matrix Schema
 Provide `deploy_environments` as a JSON array. Each object supports:
 
