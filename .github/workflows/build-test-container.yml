@@ -713,7 +713,7 @@ jobs:
           sudo rm -rf /usr/local/share/powershell
 
           # Remove CodeQL and other toolcaches
-          sudo rm -rf /opt/hostedtoolcache
+          # Keep /opt/hostedtoolcache because setup actions and later shell steps may rely on the active runtime.
 
           docker system prune -af || true
           docker builder prune -af || true
