@@ -91,7 +91,7 @@ ARG PRIVATE_MODULE_PIP_INSTALL_LOCATION
 RUN --mount=type=ssh,required=true pip install "${PRIVATE_MODULE_PIP_INSTALL_LOCATION}"
 ```
 
-The agent remains available for dependency installation, unit and integration tests, and the image build, and is stopped during job cleanup.
+Self-hosted runners must have OpenSSH tools installed for `ssh-agent` and `ssh-add` to work.
 
 ## Deployment Matrix Schema
 Provide `deploy_environments` as a JSON array. Each object supports:
