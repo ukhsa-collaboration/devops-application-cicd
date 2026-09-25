@@ -12,3 +12,9 @@ See the [Quick Start section](docs/container-image-build-python-aws-ecs.md#quick
 
 1. [Container Image Build (Python/AWS ECS)](docs/container-image-build-python-aws-ecs.md)
 2. [Container Image Build (JavaScript/AWS ECS)](docs/container-image-build-javascript-aws-ecs.md)
+
+## Caution: aggressive cleanup
+
+The reusable container build workflow supports an `aggressively_clean` input to remove common toolchains and caches before the image build runs. This can free space on the runner, but it is deliberately destructive and can remove components that later tests or downstream build steps still need.
+
+Use it only on disposable or intentionally minimal runners, and avoid enabling it when the job depends on Java, .NET, Swift, Haskell, Android, browser tooling, Azure CLI, PowerShell, or existing Docker layers during the same workflow. In practice, this option is best reserved for very constrained runners where the build and test process does not rely on those toolchains after the cleanup step.
