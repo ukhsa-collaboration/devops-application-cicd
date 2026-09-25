@@ -154,6 +154,10 @@ on:
         required: false
         default: ""
         type: string
+      aggressively_clean:
+        required: false
+        default: false
+        type: boolean
     secrets:
       BUILD_SSH_PRIVATE_KEY:
         description: Read-only SSH key for private dependencies during tests and Docker builds.
@@ -675,6 +679,46 @@ jobs:
             echo "value=$DEFAULT_TAG" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Aggressive cleanup
+        if: inputs.aggressively_clean && runner.environment == 'github-hosted'
+        run: |
+          # Remove Java (JDKs)
+          sudo rm -rf /usr/lib/jvm
+
+          # Remove .NET SDKs
+          sudo rm -rf /usr/share/dotnet
+
+          # Remove Swift toolchain
+          sudo rm -rf /usr/share/swift
+
+          # Remove Haskell (GHC)
+          sudo rm -rf /usr/local/.ghcup
+
+          # Remove Julia
+          sudo rm -rf /usr/local/julia*
+
+          # Remove Android SDKs
+          sudo rm -rf /usr/local/lib/android
+
+          # Remove Chromium
+          sudo rm -rf /usr/local/share/chromium
+
+          # Remove Microsoft/Edge and Google Chrome builds
+          sudo rm -rf /opt/microsoft /opt/google
+
+          # Remove Azure CLI
+          sudo rm -rf /opt/az
+
+          # Remove PowerShell
+          sudo rm -rf /usr/local/share/powershell
+
+          # Remove CodeQL and other toolcaches
+          # Keep /opt/hostedtoolcache because setup actions and later shell steps may rely on the active runtime.
+
+          docker system prune -af || true
+          docker builder prune -af || true
+          df -h
+  
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
