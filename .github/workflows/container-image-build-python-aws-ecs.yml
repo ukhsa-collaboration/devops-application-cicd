@@ -147,7 +147,7 @@ on:
         default: ""
         type: string
       aggressively_clean:
-        description: Remove common language/toolchain directories before the build to free up space on Github runners; use with caution because it may remove components required by later tests or build steps.
+        description: Remove common language/toolchain directories before the build to free up space on GitHub runners; use with caution because it may remove components required by later tests or build steps.
         required: false
         default: false
         type: boolean

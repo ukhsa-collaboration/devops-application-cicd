@@ -680,7 +680,7 @@ jobs:
           fi
 
       - name: Aggressive cleanup
-        if: inputs.aggressively_clean
+        if: inputs.aggressively_clean && runner.environment == 'github-hosted'
         run: |
           # Remove Java (JDKs)
           sudo rm -rf /usr/lib/jvm
