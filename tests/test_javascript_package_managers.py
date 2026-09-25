@@ -210,8 +210,16 @@ class PackageManagerTests(unittest.TestCase):
 
     def test_aggressive_cleanup_condition(self):
         condition = BUILD["Aggressive cleanup"]["if"]
-        for value, expected in [(True, True), (False, False)]:
-            expression = f"const inputs = {{aggressively_clean: {str(value).lower()}}}; console.log(Boolean({condition}));"
+        for value, environment, expected in [
+            (True, "github-hosted", True),
+            (True, "self-hosted", False),
+            (False, "github-hosted", False),
+        ]:
+            expression = (
+                f"const inputs = {{aggressively_clean: {str(value).lower()}}}; "
+                f"const runner = {{environment: {json.dumps(environment)}}}; "
+                f"console.log(Boolean({condition}));"
+            )
             result = subprocess.run(
                 ["node", "-e", expression],
                 capture_output=True,
