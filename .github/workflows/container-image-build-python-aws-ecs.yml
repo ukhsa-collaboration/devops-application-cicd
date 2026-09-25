@@ -152,6 +152,9 @@ on:
         default: ""
         type: string
     secrets:
+      BUILD_SSH_PRIVATE_KEY:
+        description: Read-only SSH key for private dependencies during tests and Docker builds.
+        required: false
       AWS_REGISTRY_ROLE:
         required: false
       AWS_DEPLOY_ROLE:
@@ -204,6 +207,7 @@ jobs:
       pip_install_extras: ${{ inputs.pip_install_extras }}
       ecr_registry_namespace: ${{ inputs.ecr_registry_namespace }}
     secrets:
+      BUILD_SSH_PRIVATE_KEY: ${{ secrets.BUILD_SSH_PRIVATE_KEY }}
       AWS_REGISTRY_ROLE: ${{ secrets.AWS_REGISTRY_ROLE }}
 
   deploy:
