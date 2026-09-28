@@ -208,6 +208,26 @@ class PackageManagerTests(unittest.TestCase):
         ):
             self.assertEqual(BUILD[name]["run"], DEPLOY[name]["run"])
 
+    def test_aggressive_cleanup_condition(self):
+        condition = BUILD["Aggressive cleanup"]["if"]
+        for value, environment, expected in [
+            (True, "github-hosted", True),
+            (True, "self-hosted", False),
+            (False, "github-hosted", False),
+        ]:
+            expression = (
+                f"const inputs = {{aggressively_clean: {str(value).lower()}}}; "
+                f"const runner = {{environment: {json.dumps(environment)}}}; "
+                f"console.log(Boolean({condition}));"
+            )
+            result = subprocess.run(
+                ["node", "-e", expression],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(result.stdout.strip(), str(expected).lower())
+
     def test_disabled_checks_skip_setup(self):
         for name in (
             "Set up Node.js",
