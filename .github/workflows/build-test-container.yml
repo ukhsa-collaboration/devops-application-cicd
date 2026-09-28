@@ -712,8 +712,10 @@ jobs:
           # Remove PowerShell
           sudo rm -rf /usr/local/share/powershell
 
-          # Remove CodeQL and other toolcaches
-          # Keep /opt/hostedtoolcache because setup actions and later shell steps may rely on the active runtime.
+          # Remove CodeQL, which is not used after the checks above.
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+
+          # Keep the remaining /opt/hostedtoolcache because setup actions and later shell steps may rely on the active runtime.
 
           docker system prune -af || true
           docker builder prune -af || true
