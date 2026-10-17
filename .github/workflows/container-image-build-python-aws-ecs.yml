@@ -146,6 +146,11 @@ on:
         required: false
         default: ""
         type: string
+      aggressively_clean:
+        description: Remove common language/toolchain directories before the build to free up space on GitHub runners; use with caution because it may remove components required by later tests or build steps.
+        required: false
+        default: false
+        type: boolean
       post_deploy_test_command:
         description: Shell command executed against each deployed environment as an extensive post-deploy test suite. Receives BASE_URL, DEPLOY_ENVIRONMENT, and DEPLOY_IMAGE in the environment. Overridable per-environment in deploy_environments.
         required: false
@@ -206,6 +211,7 @@ jobs:
       lint_python: ${{ inputs.lint_python }}
       pip_install_extras: ${{ inputs.pip_install_extras }}
       ecr_registry_namespace: ${{ inputs.ecr_registry_namespace }}
+      aggressively_clean: ${{ inputs.aggressively_clean }}
     secrets:
       BUILD_SSH_PRIVATE_KEY: ${{ secrets.BUILD_SSH_PRIVATE_KEY }}
       AWS_REGISTRY_ROLE: ${{ secrets.AWS_REGISTRY_ROLE }}
