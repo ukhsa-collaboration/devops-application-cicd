@@ -1,5 +1,19 @@
 name: "Create new release"
 on:
+  workflow_call:
+    inputs:
+      runner_labels:
+        description: JSON array of labels for the runner.
+        required: false
+        default: '["ubuntu-latest"]'
+        type: string
+  workflow_dispatch:
+    inputs:
+      runner_labels:
+        description: JSON array of labels for the runner.
+        required: false
+        default: '["ubuntu-latest"]'
+        type: string
   pull_request:
     types:
       - closed
@@ -12,7 +26,7 @@ on:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runner_labels || '["ubuntu-latest"]') }}
     permissions:
       contents: write
     steps:

@@ -11,7 +11,20 @@ on:
       - .github/scripts/deploy/**
       - fixtures/python_container_app/**
       - docs/container-image-build-python-aws-ecs.md
+  workflow_call:
+    inputs:
+      runner_labels:
+        description: JSON array of labels for the runner.
+        required: false
+        default: '["ubuntu-latest"]'
+        type: string
   workflow_dispatch:
+    inputs:
+      runner_labels:
+        description: JSON array of labels for the runner.
+        required: false
+        default: '["ubuntu-latest"]'
+        type: string
 
 permissions:
   contents: write
@@ -24,6 +37,7 @@ jobs:
     name: Execute reusable workflow
     uses: ./.github/workflows/container-image-build-python-aws-ecs.yml
     with:
+      runner_labels: ${{ inputs.runner_labels || '["ubuntu-latest"]' }}
       app_name: sample-app
       service_identifier: reusable
       registry_hostname: ghcr.io/example
